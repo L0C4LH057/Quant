@@ -151,6 +151,11 @@ class DerivService implements TradingServiceInterface
         return [];
     }
 
+    public function getPositions(string $accountId): array
+    {
+        return [];
+    }
+
     public function deployStrategy(string $accountId, string $strategyId): bool
     {
         return true;

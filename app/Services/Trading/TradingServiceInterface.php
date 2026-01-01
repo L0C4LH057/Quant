@@ -24,6 +24,11 @@ interface TradingServiceInterface
      * Get historical trades.
      */
     public function getHistory(string $accountId, int $days = 30): array;
+    
+    /**
+     * Get currently open positions.
+     */
+    public function getPositions(string $accountId): array;
 
     /**
      * Deploy the AI Strategy (Ea/Signal) to the account.

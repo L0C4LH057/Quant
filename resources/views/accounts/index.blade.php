@@ -7,7 +7,13 @@
             <p class="text-gray-500 mt-2">Manage your connected brokers and exchanges.</p>
         </div>
 
-        <!-- Section 1: Connected Accounts List -->
+        @if($errors->has('sync'))
+            <div class="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-sm font-bold flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                {{ $errors->first('sync') }}
+            </div>
+        @endif
+
         @if(session('status'))
             <div class="p-4 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400">
                 {{ session('status') }}
@@ -34,7 +40,7 @@
                                         @endif
                                     </div>
                                     <div>
-                                        <h4 class="font-bold text-white capitalize">{{ $account->broker_type == 'mt5' ? 'MetaTrader 5' : ($account->broker_type == 'mt4' ? 'MetaTrader 4' : 'Deriv') }}</h4>
+                                        <h4 class="font-bold text-white capitalize">{{ $account->name ?? ($account->broker_type == 'mt5' ? 'MetaTrader 5' : ($account->broker_type == 'mt4' ? 'MetaTrader 4' : 'Deriv')) }}</h4>
                                         <p class="text-xs text-gray-500">{{ $account->login_id }}</p>
                                     </div>
                                 </div>
@@ -45,13 +51,13 @@
                             </div>
                             
                             <div class="flex items-end justify-between border-t border-white/5 pt-4">
-                                <div>
+                                    <div>
                                     <p class="text-xs text-gray-500 mb-1">Balance</p>
                                     <p class="text-xl font-bold text-white">${{ number_format($account->balance, 2) }}</p>
                                 </div>
-                                <button class="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path></svg>
-                                </button>
+                                    <button class="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"></path></svg>
+                                    </button>
                             </div>
                         </div>
                     @endforeach

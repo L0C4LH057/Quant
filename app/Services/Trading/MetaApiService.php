@@ -12,7 +12,8 @@ class MetaApiService implements TradingServiceInterface
 
     public function __construct()
     {
-        $this->token = config('services.meta_api.token'); // Will need to add to config
+        $this->token = config('services.meta_api.token');
+        $this->baseUrl = config('services.meta_api.account_management_url', 'https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai');
     }
 
     public function connect(string $login, string $password, string $server, string $platform): array
@@ -79,22 +80,85 @@ class MetaApiService implements TradingServiceInterface
 
     public function getAccountInfo(string $accountId): array
     {
-        // Mock Implementation
-        return [
-            'balance' => 0.00,
-            'equity' => 0.00,
-            'margin' => 0.00
-        ];
+        try {
+            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/information";
+            
+            $response = Http::withoutVerifying()->withHeaders([
+                'auth-token' => $this->token,
+            ])->get($url);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                return [
+                    'name' => $data['name'] ?? null,
+                    'balance' => $data['balance'] ?? 0.00,
+                    'equity' => $data['equity'] ?? 0.00,
+                    'margin' => $data['margin'] ?? 0.00,
+                    'freeMargin' => $data['freeMargin'] ?? 0.00,
+                    'leverage' => $data['leverage'] ?? 100,
+                    'currency' => $data['currency'] ?? 'USD',
+                ];
+            }
+
+            Log::warning("MetaApi: Failed to fetch account info for {$accountId}. Status: " . $response->status());
+            return []; // Return empty to indicate failure/no data
+
+        } catch (\Exception $e) {
+            Log::error("MetaApi Info Error: " . $e->getMessage());
+            return [];
+        }
     }
 
     public function getHistory(string $accountId, int $days = 30): array
     {
-        return [];
+        try {
+            $startTime = now()->subDays($days)->toIso8601String();
+            $endTime = now()->addHours(1)->toIso8601String(); // slight buffer
+            
+            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/history-deals/time/{$startTime}/{$endTime}";
+            
+            $response = Http::withoutVerifying()->withHeaders([
+                'auth-token' => $this->token,
+            ])->get($url);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+            
+            Log::warning("MetaApi History Fail: " . $response->body());
+            return [];
+
+        } catch (\Exception $e) {
+            Log::error("MetaApi History Error: " . $e->getMessage());
+            return [];
+        }
     }
 
     public function deployStrategy(string $accountId, string $strategyId): bool
     {
         return true;
+    }
+
+    public function getPositions(string $accountId): array
+    {
+        try {
+            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/positions";
+            
+            $response = Http::withoutVerifying()->withHeaders([
+                'auth-token' => $this->token,
+            ])->get($url);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+            
+            Log::warning("MetaApi Positions Fail: " . $response->body());
+            return [];
+
+        } catch (\Exception $e) {
+            Log::error("MetaApi Positions Error: " . $e->getMessage());
+            return [];
+        }
     }
 
     // --- Trading Implementation ---

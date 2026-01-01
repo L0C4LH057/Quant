@@ -30,6 +30,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     })->name('settings.index');
 
     Route::post('/accounts/connect', [\App\Http\Controllers\BrokerController::class, 'connect'])->name('accounts.connect');
+    Route::post('/accounts/{id}/sync', [\App\Http\Controllers\BrokerController::class, 'sync'])->name('accounts.sync');
 });
 
 Route::middleware('auth')->group(function () {
