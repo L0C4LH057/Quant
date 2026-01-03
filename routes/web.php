@@ -31,6 +31,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     Route::post('/accounts/connect', [\App\Http\Controllers\BrokerController::class, 'connect'])->name('accounts.connect');
     Route::post('/accounts/{id}/sync', [\App\Http\Controllers\BrokerController::class, 'sync'])->name('accounts.sync');
+
+    // Chart Data API
+    Route::get('/api/trading/history/{symbol}', [\App\Http\Controllers\Api\TradingDataController::class, 'getHistory'])->name('api.trading.history');
 });
 
 Route::middleware('auth')->group(function () {
@@ -60,8 +63,7 @@ Route::prefix('admin')->group(function () {
     });
 });
 
-Route::prefix('api')->group(function () {
-    Route::get('/trading/history/{symbol}', [\App\Http\Controllers\Api\TradingDataController::class, 'getHistory'])->name('api.trading.history');
-});
+
+
 
 require __DIR__.'/auth.php';

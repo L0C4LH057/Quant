@@ -329,13 +329,17 @@
         <!-- Main Content Split -->
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
-            <!-- Left Column: Trade History (8 Cols) -->
-            <div class="lg:col-span-8 p-6 rounded-2xl bg-[#0a0a0a]/80 backdrop-blur border border-white/5 h-fit">
+            <!-- Left Column: Trade History / Open Positions (8 Cols) -->
+            <div class="lg:col-span-8 p-6 rounded-2xl bg-[#0a0a0a]/80 backdrop-blur border border-white/5 h-fit" x-data="{ tab: 'history' }">
                 <div class="flex items-center justify-between mb-6">
-                    <h3 class="font-bold text-lg text-white">AI Trade History</h3>
+                    <h3 class="font-bold text-lg text-white" x-text="tab === 'history' ? 'AI Trade History' : 'Open Positions'"></h3>
                     <div class="flex gap-2">
-                         <button class="px-3 py-1 text-xs font-medium rounded-lg bg-white/10 text-white hover:bg-white/20 transition-colors">All Trades</button>
-                         <button class="px-3 py-1 text-xs font-medium rounded-lg text-gray-500 hover:bg-white/5 transition-colors">Open Positions</button>
+                         <button @click="tab = 'history'" 
+                             :class="tab === 'history' ? 'bg-white/10 text-white' : 'text-gray-500 hover:bg-white/5'"
+                             class="px-3 py-1 text-xs font-medium rounded-lg transition-colors">History</button>
+                         <button @click="tab = 'positions'" 
+                             :class="tab === 'positions' ? 'bg-white/10 text-white' : 'text-gray-500 hover:bg-white/5'"
+                             class="px-3 py-1 text-xs font-medium rounded-lg transition-colors">Open Positions</button>
                     </div>
                 </div>
                 
@@ -345,31 +349,69 @@
                             <tr class="text-xs text-gray-500 border-b border-white/5">
                                 <th class="pb-3 pl-2 font-medium">PAIR</th>
                                 <th class="pb-3 font-medium">TYPE</th>
-                                <th class="pb-3 font-medium">PRICE</th>
+                                <th class="pb-3 font-medium" x-text="tab === 'history' ? 'PRICE' : 'ENTRY'"></th>
                                 <th class="pb-3 font-medium">PROFIT/LOSS</th>
                                 <th class="pb-3 pr-2 text-right font-medium">TIME</th>
                             </tr>
                         </thead>
                         <tbody class="text-sm">
-                            @foreach($aiTrades as $trade)
-                            <tr class="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors group">
-                                <td class="py-4 pl-2 font-bold text-white">{{ $trade['pair'] }}</td>
-                                <td class="py-4">
-                                    <span class="px-2 py-1 rounded text-[10px] font-bold uppercase {{ $trade['type'] === 'BUY' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500' }}">
-                                        {{ $trade['type'] }}
-                                    </span>
-                                </td>
-                                <td class="py-4 text-gray-400">{{ number_format($trade['price'], 5) }}</td>
-                                <td class="py-4 font-bold {{ $trade['profit'] > 0 ? 'text-green-400' : 'text-red-400' }}">
-                                    {{ $trade['profit'] > 0 ? '+' : '' }}${{ number_format($trade['profit'], 2) }}
-                                </td>
-                                <td class="py-4 pr-2 text-right text-gray-500 text-xs">{{ $trade['time']->diffForHumans() }}</td>
-                            </tr>
-                            @endforeach
+                            <!-- History Rows -->
+                            <template x-if="tab === 'history'">
+                                @if($aiTrades->count() > 0)
+                                    @foreach($aiTrades as $trade)
+                                    <tr class="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors group">
+                                        <td class="py-4 pl-2 font-bold text-white">{{ $trade['pair'] }}</td>
+                                        <td class="py-4">
+                                            <span class="px-2 py-1 rounded text-[10px] font-bold uppercase {{ $trade['type'] === 'BUY' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500' }}">
+                                                {{ $trade['type'] }}
+                                            </span>
+                                        </td>
+                                        <td class="py-4 text-gray-400">{{ number_format($trade['price'], 5) }}</td>
+                                        <td class="py-4 font-bold {{ $trade['profit'] >= 0 ? 'text-green-400' : 'text-red-400' }}">
+                                            {{ $trade['profit'] >= 0 ? '+' : '' }}${{ number_format($trade['profit'], 2) }}
+                                        </td>
+                                        <td class="py-4 pr-2 text-right text-gray-500 text-xs">{{ $trade['time']->diffForHumans() }}</td>
+                                    </tr>
+                                    @endforeach
+                                @else
+                                    <tr>
+                                        <td colspan="5" class="py-8 text-center text-gray-500 text-sm">No recent history found.</td>
+                                    </tr>
+                                @endif
+                            </template>
+
+                            <!-- Open Positions Rows -->
+                            <template x-if="tab === 'positions'">
+                                @if($openPositions->count() > 0)
+                                    @foreach($openPositions as $pos)
+                                    <tr class="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors group">
+                                        <td class="py-4 pl-2 font-bold text-white">{{ $pos['pair'] }}</td>
+                                        <td class="py-4">
+                                            <span class="px-2 py-1 rounded text-[10px] font-bold uppercase {{ $pos['type'] === 'BUY' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500' }}">
+                                                {{ $pos['type'] }}
+                                            </span>
+                                            <span class="text-xs text-gray-500 ml-1">{{ $pos['volume'] }}</span>
+                                        </td>
+                                        <td class="py-4 text-gray-400">
+                                            <div>{{ number_format($pos['entry_price'], 5) }}</div>
+                                            <div class="text-[10px] text-gray-600">{{ number_format($pos['current_price'], 5) }}</div>
+                                        </td>
+                                        <td class="py-4 font-bold {{ $pos['profit'] >= 0 ? 'text-green-400' : 'text-red-400' }}">
+                                            {{ $pos['profit'] >= 0 ? '+' : '' }}${{ number_format($pos['profit'], 2) }}
+                                        </td>
+                                        <td class="py-4 pr-2 text-right text-gray-500 text-xs">{{ $pos['time']->diffForHumans() }}</td>
+                                    </tr>
+                                    @endforeach
+                                @else
+                                    <tr>
+                                        <td colspan="5" class="py-8 text-center text-gray-500 text-sm">No open positions.</td>
+                                    </tr>
+                                @endif
+                            </template>
                         </tbody>
                     </table>
                 </div>
-                <div class="mt-4 pt-4 border-t border-white/5 text-center">
+                <div class="mt-4 pt-4 border-t border-white/5 text-center" x-show="tab === 'history'">
                     <a href="#" class="text-xs text-gray-500 hover:text-brand-400 transition-colors">View All Transaction History &rarr;</a>
                 </div>
             </div>

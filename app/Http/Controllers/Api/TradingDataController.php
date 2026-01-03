@@ -3,116 +3,149 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\Trading\TradingServiceInterface;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use App\Models\TradingAccount;
+use App\Services\Trading\TradingServiceFactory;
+use Carbon\Carbon;
 
 class TradingDataController extends Controller
 {
-    protected $tradingService;
+    protected $tradingFactory;
 
-    public function __construct(TradingServiceInterface $tradingService)
+    public function __construct(TradingServiceFactory $tradingFactory)
     {
-        $this->tradingService = $tradingService;
+        $this->tradingFactory = $tradingFactory;
     }
 
-    public function getHistory(Request $request, $symbol)
+    /**
+     * Fetch historical candle data for a symbol.
+     * Route: GET /api/trading/history/{symbol}
+     */
+    protected function generateMockCandles($currentPrice = 2035.00, $timeframe = '1H')
+    {
+        // ... (Mock Fallback kept for safety, but primary logic is below) ...
+        return $this->generateRandomWalk($currentPrice, $timeframe);
+    }
+
+    /**
+     * Fetch Real Data from Yahoo Finance (Public Endpoint)
+     * Note: This is a workaround to provide real charts without a paid Market Data subscription.
+     */
+    public function getHistory(Request $request, string $symbol)
     {
         try {
-           // We can default to 'H1' or accept it as a query param
-           $timeframe = $request->query('timeframe', 'H1');
-           $days = $request->query('days', 30);
+            $tf = $request->query('timeframe', '1H');
+            
+            // 1. Map Symbol to Yahoo Ticker
+            $yahooSymbol = match(strtoupper($symbol)) {
+                'XAUUSD', 'GOLD' => 'GC=F', // Gold Futures (Close enough for visual)
+                'BTCUSD', 'BTC' => 'BTC-USD',
+                'EURUSD' => 'EURUSD=X',
+                'GBPUSD' => 'GBPUSD=X',
+                'USDJPY' => 'USDJPY=X',
+                default => 'BTC-USD'
+            };
 
-           // Use the service to get (simulated) history
-           $data = $this->tradingService->getHistory('simulated_account', $days);
-           
-           // If the service returns empty (as currently implemented), we generate simulation here or in service.
-           // Per plan, we should implement logic in MetaApiService, but checking if it's there.
-           // If the service doesn't support "symbol" specific calls in getHistory signature yet, we might need to adjust.
-           // Actually, the interface `getHistory` only accepts accountId and days. 
-           // We need to extend this or handle it. For simulation, accountId doesn't matter.
-           
-           // Let's rely on the service to give us data. If it returns basic array, we enrich it or generate it there.
-           // But wait, the standard getHistory signature in interface is: getHistory(string $accountId, int $days = 30): array
-           // It doesn't take symbol. We should probably abuse the accountId to pass the symbol for simulation, 
-           // OR standardise on a generic history simulation method.
-           
-           // Let's pass the symbol as the "accountId" for the simulation context, or just handle it.
-           // Actually, best practice: Implement a specific method for public market data if needed, 
-           // but for now reusing getHistory with a "symbol" context or just simulating independently is fine.
-           // Let's generate it directly here if the service is restricted, OR better yet, 
-           // UPDATE MetaApiService to actually generate it.
-           
-           // Since we can't change the Interface easily without breaking others, let's assume we update MetaApiService
-           // to return data. But since getHistory signature is fixed, we might just generate it here 
-           // for the "TradingDataController" specifically if only used for charts.
-           
-           // ACTUALLY, the plan said "Implement getHistory($symbol, $timeframe, $limit) method" in MetaApiService.
-           // This implies adding a NEW method or overloading.
-           // Let's add `getMarketData` to MetaApiService specifically.
-           
-           if (method_exists($this->tradingService, 'getMarketData')) {
-               $data = $this->tradingService->getMarketData($symbol, $timeframe);
-           } else {
-               // Fallback / Temporary Simulation in Controller if Service update lags
-               $data = $this->generateSimulation($symbol, $timeframe);
-           }
+            // 2. Map Timeframe to Yahoo Interval/Range
+            $params = match($tf) {
+                '1M' => ['interval' => '1m', 'range' => '1d'],   // Intraday
+                '15M' => ['interval' => '15m', 'range' => '5d'],
+                '1H' => ['interval' => '60m', 'range' => '1mo'], // Good availability
+                '4H' => ['interval' => '60m', 'range' => '3mo'], // Yahoo doesn't support 4h, well aggregate or just show 1h
+                '1D' => ['interval' => '1d', 'range' => '2y'],
+                default => ['interval' => '60m', 'range' => '1mo']
+            };
 
+            $url = "https://query1.finance.yahoo.com/v8/finance/chart/{$yahooSymbol}?interval={$params['interval']}&range={$params['range']}";
+
+            // 3. Fetch Data
+            $response = \Illuminate\Support\Facades\Http::get($url);
+            
+            if ($response->successful()) {
+                $raw = $response->json();
+                $result = $raw['chart']['result'][0] ?? null;
+                
+                if ($result) {
+                    $timestamps = $result['timestamp'] ?? [];
+                    $quote = $result['indicators']['quote'][0] ?? [];
+                    
+                    $opens = $quote['open'] ?? [];
+                    $highs = $quote['high'] ?? [];
+                    $lows = $quote['low'] ?? [];
+                    $closes = $quote['close'] ?? [];
+                    
+                    $candles = [];
+                    foreach ($timestamps as $i => $time) {
+                        // Skip incomplete candles
+                        if (!isset($opens[$i]) || !isset($closes[$i])) continue;
+                        
+                        $candles[] = [
+                            'time' => $time,
+                            'open' => round($opens[$i], 5),
+                            'high' => round($highs[$i], 5),
+                            'low' => round($lows[$i], 5),
+                            'close' => round($closes[$i], 5),
+                        ];
+                    }
+
+                    // Sort valid candles
+                   // $candles = collect($candles)->sortBy('time')->values()->all();
+
+                    return response()->json([
+                        'success' => true,
+                        'source' => 'yahoo_finance',
+                        'data' => $candles
+                    ]);
+                }
+            }
+            
+            // Fallback if Yahoo fails
             return response()->json([
-                'success' => true,
-                'symbol' => $symbol,
-                'data' => $data
+                'success' => true, 
+                'source' => 'mock_fallback_network_error',
+                'data' => $this->generateRandomWalk(2000, $tf)
             ]);
 
         } catch (\Exception $e) {
-            Log::error("Market Data Error: " . $e->getMessage());
+            Log::error("Yahoo Data Error: " . $e->getMessage());
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
-    private function generateSimulation($symbol, $timeframe)
-    {
-        $basePrice = match($symbol) {
-             'XAUUSD' => 2035.00,
-             'BTCUSD' => 64000.00,
-             'EURUSD' => 1.0850,
-             'GBPUSD' => 1.2700,
-             'US30'   => 38000.00,
-             default  => 100.00
+    protected function generateRandomWalk($currentPrice, $timeframe) {
+        $data = [];
+        $secondsPerCandle = match($timeframe) {
+            '1M' => 60,
+            '15M' => 900,
+            '4H' => 14400,
+            '1D' => 86400,
+            default => 3600
         };
-
-        $volatility = $basePrice * 0.002; // 0.2%
-        $candles = [];
-        $now = time();
-        $interval = 3600; // H1
-
-        if ($timeframe === 'M1') $interval = 60;
-        if ($timeframe === 'M15') $interval = 900;
-        if ($timeframe === 'D1') $interval = 86400;
-
-        $time = $now - (100 * $interval);
-        
-        $currentPrice = $basePrice;
+        $time = Carbon::now()->subSeconds($secondsPerCandle * 100)->timestamp;
+        $price = $currentPrice;
 
         for ($i = 0; $i < 100; $i++) {
-            $open = $currentPrice;
-            $change = (mt_rand(-100, 100) / 100) * $volatility;
+            $volatility = $price * 0.002;
+            $change = (rand(-100, 100) / 100) * $volatility;
+            $open = $price;
             $close = $open + $change;
-            $high = max($open, $close) + (mt_rand(0, 50) / 100) * $volatility;
-            $low = min($open, $close) - (mt_rand(0, 50) / 100) * $volatility;
+            $high = max($open, $close) + $volatility/2;
+            $low = min($open, $close) - $volatility/2;
 
-            $candles[] = [
+            $data[] = [
                 'time' => $time,
                 'open' => round($open, 5),
                 'high' => round($high, 5),
                 'low' => round($low, 5),
                 'close' => round($close, 5),
             ];
-
-            $currentPrice = $close;
-            $time += $interval;
+            $price = $close;
+            $time += $secondsPerCandle;
         }
-
-        return $candles;
+        return $data;
     }
 }
+
+// Add simple Carbon Macro for subCandles if needed or just logic above

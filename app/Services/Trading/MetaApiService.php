@@ -81,7 +81,8 @@ class MetaApiService implements TradingServiceInterface
     public function getAccountInfo(string $accountId): array
     {
         try {
-            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/information";
+            // Correct endpoint per API docs is /account-information
+            $url = "{$this->getRegionalUrl($accountId)}/users/current/accounts/{$accountId}/account-information";
             
             $response = Http::withoutVerifying()->withHeaders([
                 'auth-token' => $this->token,
@@ -100,7 +101,7 @@ class MetaApiService implements TradingServiceInterface
                 ];
             }
 
-            Log::warning("MetaApi: Failed to fetch account info for {$accountId}. Status: " . $response->status());
+            Log::warning("MetaApi: Failed to fetch account info for {$accountId}. URL: {$url} Status: " . $response->status());
             return []; // Return empty to indicate failure/no data
 
         } catch (\Exception $e) {
@@ -115,7 +116,7 @@ class MetaApiService implements TradingServiceInterface
             $startTime = now()->subDays($days)->toIso8601String();
             $endTime = now()->addHours(1)->toIso8601String(); // slight buffer
             
-            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/history-deals/time/{$startTime}/{$endTime}";
+            $url = "{$this->getRegionalUrl($accountId)}/users/current/accounts/{$accountId}/history-deals/time/{$startTime}/{$endTime}";
             
             $response = Http::withoutVerifying()->withHeaders([
                 'auth-token' => $this->token,
@@ -133,7 +134,7 @@ class MetaApiService implements TradingServiceInterface
             return [];
         }
     }
-
+    
     public function deployStrategy(string $accountId, string $strategyId): bool
     {
         return true;
@@ -142,7 +143,7 @@ class MetaApiService implements TradingServiceInterface
     public function getPositions(string $accountId): array
     {
         try {
-            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/positions";
+            $url = "{$this->getRegionalUrl($accountId)}/users/current/accounts/{$accountId}/positions";
             
             $response = Http::withoutVerifying()->withHeaders([
                 'auth-token' => $this->token,
@@ -161,11 +162,55 @@ class MetaApiService implements TradingServiceInterface
         }
     }
 
+    public function getSymbolPrice(string $accountId, string $symbol): array
+    {
+        try {
+            $url = "{$this->getRegionalUrl($accountId)}/users/current/accounts/{$accountId}/symbols/{$symbol}/current-price";
+            
+            $response = Http::withoutVerifying()->withHeaders([
+                'auth-token' => $this->token,
+            ])->get($url);
+
+            if ($response->successful()) {
+                return $response->json(); // Returns { symbol, bid, ask, ... }
+            }
+            return [];
+        } catch (\Exception $e) {
+            Log::error("MetaApi Price Error: " . $e->getMessage());
+            return [];
+        }
+    }
+
     // --- Trading Implementation ---
+
+    protected function getRegionalUrl(string $accountId): string
+    {
+         try {
+             // 1. Fetch Region
+            $response = Http::withoutVerifying()->withHeaders([
+                'auth-token' => $this->token,
+            ])->get("{$this->baseUrl}/users/current/accounts/{$accountId}");
+
+            if ($response->successful()) {
+                $region = $response->json()['region'] ?? 'new-york';
+                
+                // DATA-FIX: Ensure we use the correct base domain for Client API
+                // Even if Provisioning is on ...agiliumtrade.agiliumtrade.ai, Client must be ...agiliumtrade.ai
+                $baseDomain = 'agiliumtrade.ai'; 
+                
+                return "https://mt-client-api-v1.{$region}.{$baseDomain}";
+            }
+         } catch (\Exception $e) {
+             Log::error("MetaApi: Failed to resolve region for {$accountId}");
+         }
+         
+         // Fallback
+         return "https://mt-client-api-v1.london.agiliumtrade.ai";
+    }
 
     protected function getTradeUrl(): string
     {
-        // Switch from provisioning to client API subdomain
+        // Deprecated, use getRegionalUrl
         return str_replace('mt-provisioning-api-v1', 'mt-client-api-v1', $this->baseUrl);
     }
 
@@ -182,9 +227,6 @@ class MetaApiService implements TradingServiceInterface
 
     public function placeLimitOrder(string $accountId, string $symbol, string $action, float $volume, float $price, float $stopLoss = 0, float $takeProfit = 0): array
     {
-        // Map common actions to MetaApi types (e.g. BUY_LIMIT, SELL_STOP)
-        // For simplicity, assuming caller passes valid MetaApi Action Type or we keep it simple here.
-        // Let's assume $action is passed as parameter like 'ORDER_TYPE_BUY_LIMIT'
         return $this->placeOrder($accountId, [
             'symbol' => $symbol,
             'actionType' => $action, 
@@ -200,7 +242,7 @@ class MetaApiService implements TradingServiceInterface
         try {
             Log::info("MetaApi: Placing Order on $accountId", $payload);
             
-            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/trade";
+            $url = "{$this->getRegionalUrl($accountId)}/users/current/accounts/{$accountId}/trade";
             
             $response = Http::withoutVerifying()->withHeaders([
                 'auth-token' => $this->token,
@@ -229,7 +271,7 @@ class MetaApiService implements TradingServiceInterface
     public function modifyTrade(string $accountId, string $tradeId, float $stopLoss, float $takeProfit): array
     {
         try {
-            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/orders/{$tradeId}";
+            $url = "{$this->getRegionalUrl($accountId)}/users/current/accounts/{$accountId}/orders/{$tradeId}";
             
             $response = Http::withoutVerifying()->withHeaders([
                 'auth-token' => $this->token,
@@ -253,7 +295,7 @@ class MetaApiService implements TradingServiceInterface
         try {
             // Note: Close often uses a separate endpoint or 'ORDER_CLOSE' action
             // Using the MetaApi "close position" pattern usually
-            $url = "{$this->getTradeUrl()}/users/current/accounts/{$accountId}/positions/{$tradeId}/close";
+            $url = "{$this->getRegionalUrl($accountId)}/users/current/accounts/{$accountId}/positions/{$tradeId}/close";
             
             $response = Http::withoutVerifying()->withHeaders([
                 'auth-token' => $this->token,

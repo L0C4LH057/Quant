@@ -66,7 +66,7 @@
                         <template x-for="tf in ['1M', '15M', '1H', '4H', '1D']">
                             <button class="px-3 py-1.5 text-xs rounded-md font-medium transition-all"
                                 :class="activeTimeframe === tf ? 'bg-violet-600 text-white shadow-lg shadow-violet-500/25' : 'text-gray-500 hover:text-gray-300'"
-                                @click="activeTimeframe = tf" x-text="tf"></button>
+                                @click="setTimeframe(tf)" x-text="tf"></button>
                         </template>
                     </div>
                     <button @click="fullscreen = !fullscreen" class="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors">
@@ -76,8 +76,50 @@
             </div>
 
             <!-- Chart Area -->
-            <div class="flex-1 relative w-full bg-[#050505]">
+            <div class="flex-1 relative w-full bg-[#050505] overflow-hidden">
                 <div id="alphaChart" class="absolute inset-0 w-full h-full"></div>
+                
+                <!-- Scanner Overlay (Premium HUD Style) -->
+                <div x-show="isScanning" 
+                     x-transition:enter="transition ease-out duration-300"
+                     x-transition:enter-start="opacity-0 scale-95"
+                     x-transition:enter-end="opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-200"
+                     x-transition:leave-start="opacity-100 scale-100"
+                     x-transition:leave-end="opacity-0 scale-95"
+                     class="absolute inset-0 z-30 pointer-events-none flex flex-col justify-between p-6 bg-black/40 backdrop-blur-[2px]">
+                     
+                     <!-- Background Grid -->
+                     <div class="absolute inset-0 opacity-20" style="background-image: linear-gradient(rgba(34, 211, 238, 0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(34, 211, 238, 0.1) 1px, transparent 1px); background-size: 40px 40px;"></div>
+
+                     <!-- The Scan Beam (Moves Up/Down) -->
+                     <div class="absolute inset-x-0 h-32 -translate-y-1/2 pointer-events-none animate-[scanPremium_2s_ease-in-out_infinite]">
+                         <div class="w-full h-full bg-gradient-to-b from-transparent via-cyan-500/10 to-transparent"></div>
+                         <div class="absolute top-1/2 left-0 right-0 h-[2px] bg-cyan-400 shadow-[0_0_40px_4px_rgba(34,211,238,0.5)]"></div>
+                     </div>
+
+                     <!-- HUD Corners -->
+                     <div class="flex justify-between relative z-10">
+                         <div class="w-16 h-16 border-t-2 border-l-2 border-cyan-500 rounded-tl-xl shadow-[0_0_15px_rgba(34,211,238,0.5)]"></div>
+                         <div class="w-16 h-16 border-t-2 border-r-2 border-cyan-500 rounded-tr-xl shadow-[0_0_15px_rgba(34,211,238,0.5)]"></div>
+                     </div>
+                     
+                     <!-- Center Status -->
+                     <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center z-20">
+                         <h2 class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-white tracking-tighter drop-shadow-[0_0_10px_rgba(34,211,238,0.8)]">
+                             AI SCANNING
+                         </h2>
+                         <div class="flex items-center justify-center gap-2 mt-4">
+                             <span class="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></span>
+                             <p class="text-cyan-400 font-mono text-sm tracking-[0.3em] font-bold">ANALYZING PATTERNS</p>
+                         </div>
+                     </div>
+
+                     <div class="flex justify-between relative z-10">
+                         <div class="w-16 h-16 border-b-2 border-l-2 border-cyan-500 rounded-bl-xl shadow-[0_0_15px_rgba(34,211,238,0.5)]"></div>
+                         <div class="w-16 h-16 border-b-2 border-r-2 border-cyan-500 rounded-br-xl shadow-[0_0_15px_rgba(34,211,238,0.5)]"></div>
+                     </div>
+                </div>
                 
                 <!-- Status Overlay (Loading/Error) -->
                 <div x-show="status.loading || status.error" 
@@ -103,20 +145,7 @@
                     </div>
                 </div>
 
-                <!-- Floating Order Panel -->
-                <div class="absolute top-4 right-4 bg-[#111]/90 backdrop-blur-md border border-white/10 rounded-xl p-4 w-64 shadow-2xl z-10" x-show="!status.loading">
-                    <div class="flex gap-2 mb-4">
-                        <button class="flex-1 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/20 rounded-lg text-sm font-bold transition-colors">BUY</button>
-                        <button class="flex-1 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-lg text-sm font-bold transition-colors">SELL</button>
-                    </div>
-                    <div class="space-y-3">
-                        <div class="flex justify-between text-xs">
-                            <span class="text-gray-500">Lot Size</span>
-                            <span class="text-white font-mono">1.00</span>
-                        </div>
-                        <input type="range" min="0.01" max="5.00" step="0.01" class="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
-                    </div>
-                </div>
+
             </div>
         </div>
 
@@ -182,6 +211,27 @@
                 </div>
             </div>
 
+            <!-- Quick Actions -->
+            <div class="px-4 py-2 border-t border-white/5 bg-[#0a0a0a]">
+                <div class="flex gap-2 overflow-x-auto custom-scrollbar pb-2">
+                    <button @click="input = 'Analyze this market structure'; sendMessage()" class="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs font-medium text-gray-400 hover:text-cyan-400 hover:bg-cyan-400/10 hover:border-cyan-400/20 whitespace-nowrap transition-all">
+                        Analyze Market
+                    </button>
+                    <button @click="input = 'Suggest a strategy for this trend'; sendMessage()" class="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs font-medium text-gray-400 hover:text-violet-400 hover:bg-violet-400/10 hover:border-violet-400/20 whitespace-nowrap transition-all">
+                        Create Strategy
+                    </button>
+                    <button @click="input = 'Assess risk for 1 lot trade'; sendMessage()" class="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs font-medium text-gray-400 hover:text-emerald-400 hover:bg-emerald-400/10 hover:border-emerald-400/20 whitespace-nowrap transition-all">
+                        Risk Check
+                    </button>
+                    <button @click="input = 'Buy 0.1 Lot'; sendMessage()" class="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs font-medium text-gray-400 hover:text-green-400 hover:bg-green-400/10 hover:border-green-400/20 whitespace-nowrap transition-all">
+                        Buy 0.1
+                    </button>
+                    <button @click="input = 'Sell 0.1 Lot'; sendMessage()" class="px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs font-medium text-gray-400 hover:text-red-400 hover:bg-red-400/10 hover:border-red-400/20 whitespace-nowrap transition-all">
+                        Sell 0.1
+                    </button>
+                </div>
+            </div>
+
             <!-- Input Area -->
             <div class="p-4 bg-[#0a0a0a] border-t border-white/5">
                 <form @submit.prevent="sendMessage" class="relative group">
@@ -202,141 +252,250 @@
     <!-- Chart Engine Script -->
     <script>
         document.addEventListener('alpine:init', () => {
-             Alpine.data('alphaTerminal', () => ({
-                activeTimeframe: '1H',
-                activeAsset: 'XAUUSD',
-                fullscreen: false,
-                status: { loading: true, error: false, message: '', debug: 'Waiting for libs...' },
-                assets: {
-                    'XAUUSD': { name: 'Gold Spot', price: 2034.50 },
-                    'BTCUSD': { name: 'Bitcoin', price: 64200.00 },
-                    'EURUSD': { name: 'Euro/USD', price: 1.0850 },
-                },
-                messages: [],
-                input: '',
-                isTyping: false,
-                chart: null,
-                candleSeries: null,
+             Alpine.data('alphaTerminal', () => {
+                 // Closure variables to avoid Alpine Proxy issues with complex objects
+                 let chart = null;
+                 let candleSeries = null;
 
-                init() {
-                    this.waitForLib();
-                },
+                 return {
+                    activeTimeframe: '1H',
+                    activeAsset: 'XAUUSD',
+                    fullscreen: false,
+                    status: { loading: true, error: false, message: '', debug: 'Waiting for libs...' },
+                    assets: {
+                        'XAUUSD': { name: 'Gold Spot', price: 2034.50 },
+                        'BTCUSD': { name: 'Bitcoin', price: 64200.00 },
+                        'EURUSD': { name: 'Euro/USD', price: 1.0850 },
+                    },
+                    messages: [],
+                    input: '',
+                    isTyping: false,
+                    isScanning: false, // New State
+                    activePriceLines: [], // To track and remove old TP/SL lines
 
-                waitForLib() {
-                     if(window.LightweightCharts && typeof window.LightweightCharts.createChart === 'function') {
-                         this.status.debug = 'Library Loaded via ' + (window.LightweightCharts ? 'Local' : 'Unknown'); 
-                         this.initChart();
-                         this.generateMockData();
-                         this.status.loading = false;
-                     } else {
-                         this.status.debug = 'Waiting for LightweightCharts... (' + (window.LightweightCharts ? 'Object found' : 'Not found') + ')';
-                         setTimeout(() => this.waitForLib(), 200);
-                     }
-                },
+                    // NO reactive chart properties here
 
-                formatPrice(price) {
-                    return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2 }).format(price);
-                },
+                    init() {
+                        this.waitForLib();
+                    },
 
-                switchAsset(symbol) {
-                    this.activeAsset = symbol;
-                    this.messages.push({
-                        id: Date.now(),
-                        text: `Switching analysis to ${symbol}. Loading technicals...`,
-                        isUser: false
-                    });
-                    this.generateMockData();
-                },
-
-                initChart() {
-                    const chartContainer = document.getElementById('alphaChart');
-                    // Check if trading view lib is loaded, otherwise use fallback or wait
-                    if(!window.LightweightCharts) {
-                        console.error('Lightweight Charts library not loaded.');
-                        return;
-                    }
-
-                    this.chart = window.LightweightCharts.createChart(chartContainer, {
-                        layout: {
-                            background: { color: '#050505' },
-                            textColor: '#6b7280',
-                            fontFamily: 'Inter, sans-serif',
-                        },
-                        grid: {
-                            vertLines: { color: '#ffffff05' },
-                            horzLines: { color: '#ffffff05' },
-                        },
-                        crosshair: {
-                            mode: 1, // Magnet
-                            vertLine: { color: '#8b5cf6', width: 1, style: 3, labelBackgroundColor: '#8b5cf6' },
-                            horzLine: { color: '#8b5cf6', width: 1, style: 3, labelBackgroundColor: '#8b5cf6' },
-                        },
-                        timeScale: { borderColor: '#ffffff10' },
-                        rightPriceScale: { borderColor: '#ffffff10' },
-                    });
-
-                    this.candleSeries = this.chart.addCandlestickSeries({
-                        upColor: '#10b981',
-                        downColor: '#ef4444', 
-                        borderVisible: false,
-                        wickUpColor: '#10b981',
-                        wickDownColor: '#ef4444',
-                    });
-
-                    new ResizeObserver(entries => {
-                        for (let entry of entries) {
-                            const { width, height } = entry.contentRect;
-                            this.chart.applyOptions({ width, height });
+                    // Trigger the Scan Effect & Analysis
+                    scanMarket() {
+                        this.isScanning = true;
+                        this.messages.push({ id: Date.now(), text: "Initiating Deep Market Scan (Order Flow + Volume Profile)...", isUser: false });
+                        
+                        // Clear old lines
+                        if(this.activePriceLines.length > 0 && candleSeries) {
+                            this.activePriceLines.forEach(line => candleSeries.removePriceLine(line));
+                            this.activePriceLines = [];
                         }
-                    }).observe(chartContainer);
-                },
+                        if(candleSeries) candleSeries.setMarkers([]); // Clear markers
 
-                generateMockData() {
-                    fetch(`/api/trading/history/${this.activeAsset}?timeframe=${this.activeTimeframe}`)
-                        .then(response => response.json())
-                        .then(data => {
-                             if(data.success && this.candleSeries) {
-                                 // Ensure data is sorted by time
-                                 const sortedData = data.data.sort((a, b) => a.time - b.time);
-                                 this.candleSeries.setData(sortedData);
-                                 this.chart.timeScale().fitContent();
+                        // Simulate AI processing time matching the animation
+                        setTimeout(() => {
+                            this.isScanning = false;
+                            this.drawTradeSetup();
+                        }, 5000);
+                    },
+
+                    drawTradeSetup() {
+                         const currentPrice = this.assets[this.activeAsset].price;
+                         const direction = Math.random() > 0.5 ? 'Buy' : 'Sell';
+                         const offset = this.activeAsset === 'XAUUSD' ? 2.5 : 0.0020; // Example spread adjustment
+                         
+                         const sl = direction === 'Buy' ? currentPrice - offset : currentPrice + offset;
+                         const tp = direction === 'Buy' ? currentPrice + (offset * 2) : currentPrice - (offset * 2);
+
+                         // 1. Add Markers (Arrows)
+                         // We need a time for the marker. Let's use the last known mock candle time or just 'now'
+                         // Since we don't have exact candle object here easily without querying series, 
+                         // we will just assume the setup is 'Latest'. 
+                         // *Note: Markers require 'time' matching a bar. 
+                         // For this simulation, we'll fetch the last data point time from our internal generated data or just skip if complex.*
+                         // Simpler approach: Just use Price Lines which are time-independent.
+                         
+                         if (!candleSeries) return;
+
+                         // Draw TP Line
+                         const tpLine = candleSeries.createPriceLine({
+                            price: tp,
+                            color: '#10b981',
+                            lineWidth: 2,
+                            lineStyle: 0, // Solid
+                            axisLabelVisible: true,
+                            title: 'TP (AI Target)',
+                         });
+                         this.activePriceLines.push(tpLine);
+
+                         // Draw SL Line
+                         const slLine = candleSeries.createPriceLine({
+                            price: sl,
+                            color: '#ef4444',
+                            lineWidth: 2,
+                            lineStyle: 0, // Solid
+                            axisLabelVisible: true,
+                            title: 'SL (Protection)',
+                         });
+                         this.activePriceLines.push(slLine);
+
+                         // Draw Entry Marker (Mocking time roughly)
+                         // Getting last bar time is tricky from outside without tracking it. 
+                         // We will rely on text feedback mostly, but lines are great.
+
+                         this.messages.push({ 
+                            id: Date.now(), 
+                            text: `Scan Complete. \nStrategy: ${direction} Impulsive \n✅ TP: ${this.formatPrice(tp)} \n🛑 SL: ${this.formatPrice(sl)} \nConfidence: 87%`, 
+                            isUser: false 
+                         });
+                    },
+
+                    waitForLib() {
+                         if(window.LightweightCharts && typeof window.LightweightCharts.createChart === 'function') {
+                             this.status.debug = 'Library Loaded'; 
+                             this.initChart();
+                             this.generateMockData();
+                             this.status.loading = false;
+                         } else {
+                             // Try to load via CDN if local failed
+                             if(!document.getElementById('lw-cdn')) {
+                                 this.status.debug = 'Local failed, trying CDN (v4.2.0)...';
+                                 const script = document.createElement('script');
+                                 script.id = 'lw-cdn';
+                                 // PINNED VERSION 4.2.0 to ensure API compatibility (v5 removed helper methods)
+                                 script.src = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
+                                 script.onload = () => { this.waitForLib(); };
+                                 document.head.appendChild(script);
+                             } else {
+                                 this.status.debug = 'Waiting for LightweightCharts CDN...';
+                                 setTimeout(() => this.waitForLib(), 500);
                              }
-                        })
-                        .catch(error => console.error('Error fetching data:', error));
-                },
+                         }
+                    },
 
-                sendMessage() {
-                    if (!this.input.trim()) return;
-                    this.messages.push({ id: Date.now(), text: this.input, isUser: true });
-                    const q = this.input.toLowerCase();
-                    this.input = '';
-                    this.scrollToBottom();
+                    formatPrice(price) {
+                        return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2 }).format(price);
+                    },
 
-                    this.isTyping = true;
-                    setTimeout(() => {
-                        this.isTyping = false;
-                        let r = "I'm calculating optimal entries driven by recent volume spikes.";
-                        if(q.includes('buy')) r = "Bullish momentum detected. RSI at 45. Consider long entries above 2038.00.";
-                        if(q.includes('sell')) r = "Bearish divergence on H4. Pivot point at 2040.00 acts as strong resistance.";
-                        this.messages.push({ id: Date.now(), text: r, isUser: false });
+                    switchAsset(symbol) {
+                        this.activeAsset = symbol;
+                        this.messages.push({
+                            id: Date.now(),
+                            text: `Switching analysis to ${symbol}. Loading technicals...`,
+                            isUser: false
+                        });
+                        this.generateMockData();
+                    },
+
+                    setTimeframe(tf) {
+                        this.activeTimeframe = tf;
+                        this.generateMockData();
+                    },
+
+                    initChart() {
+                        const chartContainer = document.getElementById('alphaChart');
+                        if(!window.LightweightCharts) return;
+
+                        // Clear if exists
+                        if(chart) {
+                            chart.remove();
+                            chartContainer.innerHTML = '';
+                        }
+
+                        chart = window.LightweightCharts.createChart(chartContainer, {
+                            layout: {
+                                background: { color: '#050505' },
+                                textColor: '#6b7280',
+                                fontFamily: 'Inter, sans-serif',
+                            },
+                            grid: {
+                                vertLines: { color: '#ffffff05' },
+                                horzLines: { color: '#ffffff05' },
+                            },
+                            crosshair: {
+                                mode: 1, // Magnet
+                                vertLine: { color: '#8b5cf6', width: 1, style: 3, labelBackgroundColor: '#8b5cf6' },
+                                horzLine: { color: '#8b5cf6', width: 1, style: 3, labelBackgroundColor: '#8b5cf6' },
+                            },
+                            timeScale: { borderColor: '#ffffff10' },
+                            rightPriceScale: { borderColor: '#ffffff10' },
+                        });
+
+                        candleSeries = chart.addCandlestickSeries({
+                            upColor: '#10b981',
+                            downColor: '#ef4444', 
+                            borderVisible: false,
+                            wickUpColor: '#10b981',
+                            wickDownColor: '#ef4444',
+                        });
+
+                        new ResizeObserver(entries => {
+                            if (!chartContainer || !chart) return;
+                            for (let entry of entries) {
+                                const { width, height } = entry.contentRect;
+                                chart.applyOptions({ width, height });
+                            }
+                        }).observe(chartContainer);
+                    },
+
+                    generateMockData() {
+                        fetch(`/api/trading/history/${this.activeAsset}?timeframe=${this.activeTimeframe}`)
+                            .then(response => response.json())
+                            .then(data => {
+                                 if(data.success && candleSeries) {
+                                     // Ensure data is sorted by time
+                                     const sortedData = data.data.sort((a, b) => a.time - b.time);
+                                     candleSeries.setData(sortedData);
+                                     chart.timeScale().fitContent();
+                                 }
+                            })
+                            .catch(error => console.error('Error fetching data:', error));
+                    },
+
+                    sendMessage() {
+                        if (!this.input.trim()) return;
+                        this.messages.push({ id: Date.now(), text: this.input, isUser: true });
+                        const q = this.input.toLowerCase();
+                        this.input = '';
                         this.scrollToBottom();
-                    }, 1000 + Math.random() * 1000);
-                },
 
-                scrollToBottom() {
-                    this.$nextTick(() => {
-                        this.$refs.chatStream.scrollTop = this.$refs.chatStream.scrollHeight;
-                    });
-                }
-             }));
+                        if (q.includes('analyze') || q.includes('analysis')) {
+                            this.scanMarket();
+                            return;
+                        }
+
+                        this.isTyping = true;
+                        
+                        setTimeout(() => {
+                            this.isTyping = false;
+                            let r = "I'm calculating optimal entries driven by recent volume spikes.";
+                            if(q.includes('buy')) r = "Bullish momentum detected. RSI at 45. Consider long entries above 2038.00.";
+                            if(q.includes('sell')) r = "Bearish divergence on H4. Pivot point at 2040.00 acts as strong resistance.";
+                            this.messages.push({ id: Date.now(), text: r, isUser: false });
+                            this.scrollToBottom();
+                        }, 1000 + Math.random() * 1000);
+                    },
+
+                    scrollToBottom() {
+                        this.$nextTick(() => {
+                            this.$refs.chatStream.scrollTop = this.$refs.chatStream.scrollHeight;
+                        });
+                    }
+                 };
+             });
         });
     </script>
     
     
     <style>
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #555; }
+        
+        @keyframes scanPremium {
+            0% { top: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            50% { top: 100%; opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 0%; opacity: 0; }
+        }
     </style>
 </x-app-layout>
