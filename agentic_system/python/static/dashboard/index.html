@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PipFlow AI - Trading Dashboard</title>
+    
+    <!-- Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --danger: #f85149;
+            --warning: #d29922;
+            --border: #30363d;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 280px 1fr 300px;
+            grid-template-rows: 60px 1fr;
+            min-height: 100vh;
+            gap: 1px;
+            background: var(--border);
+        }
+
+        /* Header */
+        .header {
+            grid-column: 1 / -1;
+            background: var(--bg-secondary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent), #a371f7);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--danger);
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: var(--bg-secondary);
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .section-title {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .account-card {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .account-value {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .account-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .account-row {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .account-stat {
+            text-align: center;
+        }
+
+        .account-stat-value {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .account-stat-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Symbol selector */
+        .symbol-select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            margin-bottom: 16px;
+            cursor: pointer;
+        }
+
+        .symbol-select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Timeframe buttons */
+        .timeframe-buttons {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .tf-btn {
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tf-btn:hover {
+            border-color: var(--accent);
+            color: var(--text-primary);
+        }
+
+        .tf-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        /* Agent selector */
+        .agent-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .agent-item {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .agent-item:hover {
+            border-color: var(--accent);
+        }
+
+        .agent-item.active {
+            border-color: var(--success);
+            background: rgba(63, 185, 80, 0.1);
+        }
+
+        .agent-name {
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .agent-status {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Main Chart Area */
+        .main {
+            background: var(--bg-secondary);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chart-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .symbol-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .symbol-name {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .price-display {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+        }
+
+        .current-price {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .price-bid {
+            color: var(--success);
+        }
+
+        .price-ask {
+            color: var(--danger);
+        }
+
+        .spread-badge {
+            background: var(--bg-tertiary);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        #chart-container {
+            flex: 1;
+            min-height: 400px;
+        }
+
+        /* Right Panel */
+        .panel-right {
+            background: var(--bg-secondary);
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        /* Trade Panel */
+        .trade-panel {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+
+        .trade-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .trade-btn {
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .trade-btn.buy {
+            background: var(--success);
+            color: white;
+        }
+
+        .trade-btn.sell {
+            background: var(--danger);
+            color: white;
+        }
+
+        .trade-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .trade-input-group {
+            margin-bottom: 12px;
+        }
+
+        .trade-input-label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        .trade-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .trade-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Positions */
+        .position-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .position-item {
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .position-symbol {
+            font-weight: 500;
+        }
+
+        .position-type {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .position-type.buy {
+            background: rgba(63, 185, 80, 0.2);
+            color: var(--success);
+        }
+
+        .position-type.sell {
+            background: rgba(248, 81, 73, 0.2);
+            color: var(--danger);
+        }
+
+        .position-details {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .position-profit {
+            font-weight: 600;
+        }
+
+        .position-profit.positive {
+            color: var(--success);
+        }
+
+        .position-profit.negative {
+            color: var(--danger);
+        }
+
+        .close-btn {
+            width: 100%;
+            margin-top: 8px;
+            padding: 6px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .close-btn:hover {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        /* Agent Signals */
+        .signal-panel {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .signal-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .signal-item:last-child {
+            border-bottom: none;
+        }
+
+        .signal-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .signal-indicator.buy {
+            background: var(--success);
+        }
+
+        .signal-indicator.sell {
+            background: var(--danger);
+        }
+
+        .signal-indicator.hold {
+            background: var(--warning);
+        }
+
+        .signal-text {
+            flex: 1;
+            font-size: 13px;
+        }
+
+        .signal-time {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-secondary);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .loading-text {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">📈</div>
+                <span>PipFlow AI</span>
+            </div>
+            <div class="connection-status">
+                <span class="status-dot" id="status-dot"></span>
+                <span id="connection-text">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="section-title">Account</div>
+            <div class="account-card">
+                <div class="account-value" id="account-balance">$0.00</div>
+                <div class="account-label">Balance</div>
+                <div class="account-row">
+                    <div class="account-stat">
+                        <div class="account-stat-value" id="account-equity">$0.00</div>
+                        <div class="account-stat-label">Equity</div>
+                    </div>
+                    <div class="account-stat">
+                        <div class="account-stat-value" id="account-profit">$0.00</div>
+                        <div class="account-stat-label">Profit</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">Symbol</div>
+            <select class="symbol-select" id="symbol-select">
+                <option value="EURUSD">EUR/USD</option>
+                <option value="GBPUSD">GBP/USD</option>
+                <option value="USDJPY">USD/JPY</option>
+                <option value="AUDUSD">AUD/USD</option>
+                <option value="USDCAD">USD/CAD</option>
+                <option value="XAUUSD">XAU/USD (Gold)</option>
+            </select>
+
+            <div class="section-title">Timeframe</div>
+            <div class="timeframe-buttons">
+                <button class="tf-btn" data-tf="M1">1m</button>
+                <button class="tf-btn" data-tf="M5">5m</button>
+                <button class="tf-btn" data-tf="M15">15m</button>
+                <button class="tf-btn" data-tf="M30">30m</button>
+                <button class="tf-btn active" data-tf="H1">1H</button>
+                <button class="tf-btn" data-tf="H4">4H</button>
+                <button class="tf-btn" data-tf="D1">1D</button>
+            </div>
+
+            <div class="section-title">Trained Agents</div>
+            <div class="agent-list" id="agent-list">
+                <div class="empty-state">No agents found</div>
+            </div>
+        </aside>
+
+        <!-- Main Chart -->
+        <main class="main">
+            <div class="chart-header">
+                <div class="symbol-info">
+                    <span class="symbol-name" id="chart-symbol">EURUSD</span>
+                    <div class="price-display">
+                        <span class="current-price price-bid" id="bid-price">0.00000</span>
+                        <span>/</span>
+                        <span class="current-price price-ask" id="ask-price">0.00000</span>
+                    </div>
+                    <span class="spread-badge" id="spread-badge">Spread: 0</span>
+                </div>
+            </div>
+            <div id="chart-container">
+                <div class="loading">
+                    <span class="loading-text">Loading chart...</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Panel -->
+        <aside class="panel-right">
+            <div class="section-title">Quick Trade</div>
+            <div class="trade-panel">
+                <div class="trade-buttons">
+                    <button class="trade-btn sell" onclick="executeTrade('SELL')">SELL</button>
+                    <button class="trade-btn buy" onclick="executeTrade('BUY')">BUY</button>
+                </div>
+                <div class="trade-input-group">
+                    <label class="trade-input-label">Lot Size</label>
+                    <input type="number" class="trade-input" id="lot-size" value="0.01" step="0.01" min="0.01">
+                </div>
+                <div class="trade-input-group">
+                    <label class="trade-input-label">Stop Loss (pips)</label>
+                    <input type="number" class="trade-input" id="stop-loss" value="50" step="1">
+                </div>
+                <div class="trade-input-group">
+                    <label class="trade-input-label">Take Profit (pips)</label>
+                    <input type="number" class="trade-input" id="take-profit" value="100" step="1">
+                </div>
+            </div>
+
+            <div class="section-title">Open Positions</div>
+            <div class="position-list" id="position-list">
+                <div class="empty-state">No open positions</div>
+            </div>
+
+            <div class="section-title" style="margin-top: 20px;">Agent Signals</div>
+            <div class="signal-panel" id="signal-panel">
+                <div class="empty-state">No signals yet</div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // State
+        let currentSymbol = 'EURUSD';
+        let currentTimeframe = 'H1';
+        let chart = null;
+        let candleSeries = null;
+        let isConnected = false;
+
+        // API base URL
+        const API_BASE = '/api/trading';
+
+        // Initialize chart
+        function initChart() {
+            const container = document.getElementById('chart-container');
+            container.innerHTML = '';
+
+            chart = LightweightCharts.createChart(container, {
+                layout: {
+                    background: { color: '#161b22' },
+                    textColor: '#8b949e',
+                },
+                grid: {
+                    vertLines: { color: '#21262d' },
+                    horzLines: { color: '#21262d' },
+                },
+                crosshair: {
+                    mode: LightweightCharts.CrosshairMode.Normal,
+                },
+                rightPriceScale: {
+                    borderColor: '#30363d',
+                },
+                timeScale: {
+                    borderColor: '#30363d',
+                    timeVisible: true,
+                },
+            });
+
+            candleSeries = chart.addCandlestickSeries({
+                upColor: '#3fb950',
+                downColor: '#f85149',
+                borderUpColor: '#3fb950',
+                borderDownColor: '#f85149',
+                wickUpColor: '#3fb950',
+                wickDownColor: '#f85149',
+            });
+
+            // Resize handler
+            new ResizeObserver(entries => {
+                if (entries[0]) {
+                    const { width, height } = entries[0].contentRect;
+                    chart.resize(width, height);
+                }
+            }).observe(container);
+        }
+
+        // Load chart data
+        async function loadChartData() {
+            try {
+                const response = await fetch(`${API_BASE}/chart-data/${currentSymbol}?timeframe=${currentTimeframe}&count=500`);
+                if (!response.ok) throw new Error('Failed to load chart data');
+                
+                const data = await response.json();
+                candleSeries.setData(data.data);
+                chart.timeScale().fitContent();
+                
+                updateConnectionStatus(true);
+            } catch (error) {
+                console.error('Chart data error:', error);
+                updateConnectionStatus(false);
+            }
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            isConnected = connected;
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('connection-text');
+            
+            if (connected) {
+                dot.classList.add('connected');
+                text.textContent = 'Connected to MT5';
+            } else {
+                dot.classList.remove('connected');
+                text.textContent = 'Disconnected';
+            }
+        }
+
+        // Load account info
+        async function loadAccountInfo() {
+            try {
+                const response = await fetch(`${API_BASE}/account`);
+                if (!response.ok) throw new Error('Failed to load account');
+                
+                const data = await response.json();
+                
+                document.getElementById('account-balance').textContent = `$${data.balance.toFixed(2)}`;
+                document.getElementById('account-equity').textContent = `$${data.equity.toFixed(2)}`;
+                document.getElementById('account-profit').textContent = `$${data.profit.toFixed(2)}`;
+                
+                updateConnectionStatus(true);
+            } catch (error) {
+                console.error('Account error:', error);
+            }
+        }
+
+        // Load positions
+        async function loadPositions() {
+            try {
+                const response = await fetch(`${API_BASE}/positions`);
+                if (!response.ok) throw new Error('Failed to load positions');
+                
+                const data = await response.json();
+                const container = document.getElementById('position-list');
+                
+                if (data.positions.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No open positions</div>';
+                    return;
+                }
+                
+                container.innerHTML = data.positions.map(pos => `
+                    <div class="position-item">
+                        <div class="position-header">
+                            <span class="position-symbol">${pos.symbol}</span>
+                            <span class="position-type ${pos.type.toLowerCase()}">${pos.type}</span>
+                        </div>
+                        <div class="position-details">
+                            <span>${pos.volume} lot @ ${pos.open_price}</span>
+                            <span class="position-profit ${pos.profit >= 0 ? 'positive' : 'negative'}">
+                                ${pos.profit >= 0 ? '+' : ''}$${pos.profit.toFixed(2)}
+                            </span>
+                        </div>
+                        <button class="close-btn" onclick="closePosition(${pos.ticket})">Close Position</button>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Positions error:', error);
+            }
+        }
+
+        // Load quote
+        async function loadQuote() {
+            try {
+                const response = await fetch(`${API_BASE}/quote/${currentSymbol}`);
+                if (!response.ok) throw new Error('Failed to load quote');
+                
+                const data = await response.json();
+                
+                document.getElementById('bid-price').textContent = data.bid.toFixed(5);
+                document.getElementById('ask-price').textContent = data.ask.toFixed(5);
+                document.getElementById('spread-badge').textContent = `Spread: ${data.spread}`;
+            } catch (error) {
+                console.error('Quote error:', error);
+            }
+        }
+
+        // Load agents
+        async function loadAgents() {
+            try {
+                const response = await fetch(`${API_BASE}/agents`);
+                if (!response.ok) throw new Error('Failed to load agents');
+                
+                const data = await response.json();
+                const container = document.getElementById('agent-list');
+                
+                if (data.agents.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No agents found</div>';
+                    return;
+                }
+                
+                container.innerHTML = data.agents.map(agent => `
+                    <div class="agent-item" onclick="selectAgent('${agent.id}')">
+                        <div class="agent-name">${agent.name}</div>
+                        <div class="agent-status">Models: ${agent.models.join(', ')}</div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Agents error:', error);
+            }
+        }
+
+        // Execute trade
+        async function executeTrade(action) {
+            const lotSize = parseFloat(document.getElementById('lot-size').value);
+            const stopLoss = parseFloat(document.getElementById('stop-loss').value);
+            const takeProfit = parseFloat(document.getElementById('take-profit').value);
+            
+            try {
+                const response = await fetch(`${API_BASE}/trade`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol: currentSymbol,
+                        action: action,
+                        lot_size: lotSize,
+                        stop_loss_pips: stopLoss,
+                        take_profit_pips: takeProfit,
+                    }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addSignal(action, `${action} ${lotSize} lot @ ${data.price}`);
+                    loadPositions();
+                    loadAccountInfo();
+                } else {
+                    alert(`Trade failed: ${data.detail}`);
+                }
+            } catch (error) {
+                console.error('Trade error:', error);
+                alert('Trade execution failed');
+            }
+        }
+
+        // Close position
+        async function closePosition(ticket) {
+            try {
+                const response = await fetch(`${API_BASE}/close/${ticket}`, {
+                    method: 'POST',
+                });
+                
+                if (response.ok) {
+                    loadPositions();
+                    loadAccountInfo();
+                } else {
+                    const data = await response.json();
+                    alert(`Close failed: ${data.detail}`);
+                }
+            } catch (error) {
+                console.error('Close error:', error);
+            }
+        }
+
+        // Select agent
+        function selectAgent(agentId) {
+            document.querySelectorAll('.agent-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            addSignal('hold', `Agent ${agentId} activated`);
+        }
+
+        // Add signal to panel
+        function addSignal(type, text) {
+            const panel = document.getElementById('signal-panel');
+            const now = new Date().toLocaleTimeString();
+            
+            const signalHtml = `
+                <div class="signal-item">
+                    <div class="signal-indicator ${type.toLowerCase()}"></div>
+                    <span class="signal-text">${text}</span>
+                    <span class="signal-time">${now}</span>
+                </div>
+            `;
+            
+            if (panel.querySelector('.empty-state')) {
+                panel.innerHTML = signalHtml;
+            } else {
+                panel.insertAdjacentHTML('afterbegin', signalHtml);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('symbol-select').addEventListener('change', (e) => {
+            currentSymbol = e.target.value;
+            document.getElementById('chart-symbol').textContent = currentSymbol;
+            loadChartData();
+            loadQuote();
+        });
+
+        document.querySelectorAll('.tf-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentTimeframe = btn.dataset.tf;
+                loadChartData();
+            });
+        });
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            loadChartData();
+            loadAccountInfo();
+            loadPositions();
+            loadQuote();
+            loadAgents();
+            
+            // Refresh data periodically
+            setInterval(loadQuote, 2000);
+            setInterval(loadPositions, 5000);
+            setInterval(loadAccountInfo, 10000);
+        });
+    </script>
+</body>
+</html>

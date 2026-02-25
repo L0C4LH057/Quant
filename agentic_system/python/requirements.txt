@@ -1,0 +1,45 @@
+# PipFlow AI - Core Dependencies
+# Python 3.10+ required
+
+# Core Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# RL & Finance (Pre-built!)
+stable-baselines3==2.2.1
+gymnasium==0.29.1
+sb3-contrib==2.2.1
+
+# Agentic AI & LLM
+langgraph>=0.2.0
+langchain>=0.1.0
+langchain-core>=0.1.0
+
+# Data & Analysis
+pandas>=2.1.4
+numpy>=1.26.3
+yfinance>=0.2.35
+pandas-ta>=0.3.14b
+
+# Training & Tuning (New!)
+optuna>=3.5.0
+scikit-learn>=1.3.0
+
+# Backtesting & Reporting (New!)
+matplotlib>=3.8.0
+seaborn>=0.13.0
+jinja2>=3.1.0
+
+# HTTP & Async
+httpx>=0.26.0
+websockets>=12.0
+aiohttp>=3.9.0
+
+# Caching & State
+redis>=5.0.0
+
+# Serialization
+orjson>=3.9.0
