@@ -46,12 +46,21 @@ class Config:
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
     log_format: str = field(default_factory=lambda: os.getenv("LOG_FORMAT", "text"))
 
-    # LLM Providers (tokens from environment)
+    # ── LLM Provider selection ────────────────────────────────────────────────
+    # Set LLM_PROVIDER to switch providers.  Only the matching API key is needed.
+    # Available: deepseek | openai | anthropic | gemini | kimi | grok
+    llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "deepseek"))
+
+    # ── LLM Provider API keys ─────────────────────────────────────────────────
     deepseek_api_key: Optional[str] = field(default_factory=lambda: os.getenv("DEEPSEEK_API_KEY"))
     deepseek_base_url: str = field(
         default_factory=lambda: os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
     )
+    openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
     anthropic_api_key: Optional[str] = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY"))
+    google_api_key: Optional[str] = field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
+    kimi_api_key: Optional[str] = field(default_factory=lambda: os.getenv("KIMI_API_KEY"))
+    xai_api_key: Optional[str] = field(default_factory=lambda: os.getenv("XAI_API_KEY"))
 
     # Market Data
     alpha_vantage_key: Optional[str] = field(default_factory=lambda: os.getenv("ALPHA_VANTAGE_KEY"))
@@ -98,10 +107,19 @@ class Config:
         Raises:
             ValueError: If no LLM API key is configured
         """
-        if not self.deepseek_api_key and not self.anthropic_api_key:
+        has_any = any([
+            self.deepseek_api_key,
+            self.openai_api_key,
+            self.anthropic_api_key,
+            self.google_api_key,
+            self.kimi_api_key,
+            self.xai_api_key,
+        ])
+        if not has_any:
             raise ValueError(
-                "At least one LLM API key is required. "
-                "Set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY in environment."
+                "At least one LLM API key is required.  "
+                "Set one of: DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, "
+                "GOOGLE_API_KEY, KIMI_API_KEY, XAI_API_KEY."
             )
 
     def validate_broker_keys(self) -> None:
@@ -133,8 +151,13 @@ class Config:
             "log_level": self.log_level,
             "log_format": self.log_format,
             "redis_url": self.redis_url,
+            "llm_provider": self.llm_provider,
             "has_deepseek_key": bool(self.deepseek_api_key),
+            "has_openai_key": bool(self.openai_api_key),
             "has_anthropic_key": bool(self.anthropic_api_key),
+            "has_google_key": bool(self.google_api_key),
+            "has_kimi_key": bool(self.kimi_api_key),
+            "has_xai_key": bool(self.xai_api_key),
             "has_metaapi_token": bool(self.metaapi_token),
         }
 
