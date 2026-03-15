@@ -95,17 +95,17 @@ Output JSON: {"approved": true/false, "reason": "brief"}"""
                 "reason": "Hold signal - no trade",
             }
 
-        # Calculate risk-adjusted position size
-        risk_pct = self._calculate_risk_pct(confidence)
-        risk_amount = account_balance * risk_pct
+        # Calculate risk-adjusted position size (UPGRADE-06: fractional Kelly on full chain)
+        kelly_fraction = self._calculate_risk_pct(confidence)
+        risk_amount = account_balance * kelly_fraction
 
         # Stop loss distance (based on ATR)
         stop_distance = atr * 2  # 2x ATR stop
 
-        # Position size based on risk
-        position_size = risk_amount / stop_distance
+        # Position size based on risk budget
+        position_size = risk_amount / stop_distance if stop_distance > 0 else 0
 
-        # Apply maximum position limit
+        # Apply maximum position limit (belt-and-suspenders cap)
         max_position = account_balance * self.max_position_pct / current_price
         position_size = min(position_size, max_position)
 
@@ -123,9 +123,9 @@ Output JSON: {"approved": true/false, "reason": "brief"}"""
             "stop_loss": round(stop_loss, 5),
             "take_profit": round(take_profit, 5),
             "risk_amount": round(risk_amount, 2),
-            "risk_pct": round(risk_pct * 100, 2),
+            "risk_pct": round(kelly_fraction * 100, 2),
             "risk_reward_ratio": 2.0,
-            "reason": f"Risk: {risk_pct*100:.1f}%, Size: {position_size:.4f}",
+            "reason": f"Risk: {kelly_fraction*100:.1f}%, Size: {position_size:.4f}",
         }
 
         self.update_state("last_risk_calc", result)

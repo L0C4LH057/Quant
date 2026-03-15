@@ -56,6 +56,11 @@ class Config:
     # Market Data
     alpha_vantage_key: Optional[str] = field(default_factory=lambda: os.getenv("ALPHA_VANTAGE_KEY"))
 
+    # News Sentiment
+    newsapi_key: Optional[str] = field(default_factory=lambda: os.getenv("NEWSAPI_KEY"))
+    finnhub_key: Optional[str] = field(default_factory=lambda: os.getenv("FINNHUB_KEY"))
+    sentiment_model: str = field(default_factory=lambda: os.getenv("SENTIMENT_MODEL", "vader"))
+
     # Broker
     metaapi_token: Optional[str] = field(default_factory=lambda: os.getenv("METAAPI_TOKEN"))
     metaapi_account_id: Optional[str] = field(default_factory=lambda: os.getenv("METAAPI_ACCOUNT_ID"))

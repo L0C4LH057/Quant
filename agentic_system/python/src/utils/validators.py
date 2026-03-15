@@ -6,9 +6,14 @@ Security:
     - Prevents invalid/malicious data from entering system
     - Clear error messages for debugging
 """
+import re
 from typing import List, Optional, Any
 import pandas as pd
 import numpy as np
+
+# Strict allowlist for trading symbols: letters, digits, and a small set of
+# connectors (dot, dash, equals, slash, underscore, caret).  Max 20 chars.
+_SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-=/_^]{0,19}$")
 
 
 def validate_positive(
@@ -167,7 +172,7 @@ def validate_array(
 
 def validate_symbol(symbol: str) -> str:
     """
-    Validate a trading symbol.
+    Validate a trading symbol using a strict regex allowlist (SEC-02 fix).
 
     Args:
         symbol: Symbol to validate
@@ -187,12 +192,11 @@ def validate_symbol(symbol: str) -> str:
     if len(symbol) < 2:
         raise ValueError(f"Symbol too short: {symbol}")
 
-    if len(symbol) > 20:
-        raise ValueError(f"Symbol too long: {symbol}")
-
-    # Check for invalid characters
-    if not symbol.replace("-", "").replace("=", "").replace(".", "").isalnum():
-        raise ValueError(f"Symbol contains invalid characters: {symbol}")
+    if not _SYMBOL_RE.match(symbol):
+        raise ValueError(
+            f"Symbol contains invalid characters: {symbol!r}. "
+            "Only letters, digits, and .-=/_^ are allowed."
+        )
 
     return symbol
 

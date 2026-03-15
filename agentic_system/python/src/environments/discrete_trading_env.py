@@ -57,6 +57,8 @@ class DiscreteTradingEnv(TradingEnv):
         feature_columns: Optional[List[str]] = None,
         sell_amount: float = 1.0,
         buy_amount: float = 1.0,
+        reward_type: str = "pnl",
+        position_change_penalty: float = 0.0,
     ):
         """
         Initialize discrete trading environment.
@@ -71,6 +73,8 @@ class DiscreteTradingEnv(TradingEnv):
             feature_columns: Additional columns to include in observation
             sell_amount: Fraction of holdings to sell (0-1), default 1.0 = sell all
             buy_amount: Fraction of cash to use for buying (0-1), default 1.0 = buy max
+            reward_type: Reward function type (pnl, sharpe, sortino)
+            position_change_penalty: Penalty for changing position (reduces churn)
         """
         super().__init__(
             df=df,
@@ -80,6 +84,8 @@ class DiscreteTradingEnv(TradingEnv):
             reward_scaling=reward_scaling,
             max_shares=max_shares,
             feature_columns=feature_columns,
+            reward_type=reward_type,
+            position_change_penalty=position_change_penalty,
         )
 
         # Validate amounts

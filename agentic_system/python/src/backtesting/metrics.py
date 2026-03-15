@@ -7,6 +7,10 @@ Calculates comprehensive trading performance metrics:
     - Drawdown analysis
     - Trade statistics
 
+GAP-13 fix: Added ``infer_periods_per_year`` helper that auto-detects the
+correct annualisation factor from the data's DatetimeIndex instead of
+always assuming 252 (daily).
+
 Token Optimization:
     - Each metric is a standalone function
     - MetricsCalculator provides batch computation
@@ -20,6 +24,46 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# ── GAP-13: Auto-detect annualisation factor ─────────────────────────────
+
+
+def infer_periods_per_year(
+    index: Optional[pd.DatetimeIndex] = None,
+    n_periods: int = 0,
+    total_days: float = 0.0,
+) -> int:
+    """
+    Infer the correct ``periods_per_year`` from a DatetimeIndex **or** from
+    the number of periods and calendar span.
+
+    Falls back to 252 (daily) when detection is ambiguous.
+    """
+    if index is not None and len(index) >= 2:
+        median_delta = pd.Series(index).diff().dropna().median()
+        seconds = median_delta.total_seconds()
+    elif n_periods > 1 and total_days > 0:
+        seconds = (total_days * 86400) / n_periods
+    else:
+        return 252  # default to daily
+
+    if seconds < 120:         # ~1 min
+        return 252 * 390      # ~1-minute bars (390 per trading day)
+    elif seconds < 600:       # ~5 min
+        return 252 * 78
+    elif seconds < 1800:      # ~15 min
+        return 252 * 26
+    elif seconds < 7200:      # ~1 h
+        return 252 * 6
+    elif seconds < 28800:     # ~4 h
+        return 252 * 2
+    elif seconds < 172800:    # ~1 d
+        return 252
+    elif seconds < 864000:    # ~1 w
+        return 52
+    else:
+        return 12             # monthly
 
 
 @dataclass

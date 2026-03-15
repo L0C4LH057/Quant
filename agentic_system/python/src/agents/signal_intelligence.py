@@ -60,6 +60,8 @@ class ArbitrationResult:
     specialist_confidence: float
     regime: MarketRegime
     source: str  # "agreement", "rl_dominant", "specialist_dominant", "consolidation_hold"
+    sentiment_signal: str = "hold"
+    sentiment_confidence: float = 0.0
     alerts: List[SignalTransition] = field(default_factory=list)
     reason: str = ""
 
@@ -390,19 +392,27 @@ class SignalTransitionDetector:
 
 class UnifiedSignalArbiter:
     """
-    Merge RL ensemble and specialist agent signals into a single final signal.
+    Merge RL ensemble, specialist agent, and sentiment signals into a single
+    final signal.
 
     Weighting logic:
         - Agreement: use agreed signal with boosted confidence.
-        - Disagreement: weighted comparison (RL 60% / specialist 40%)
-          adjusted by market regime.
+        - Disagreement: weighted comparison adjusted by market regime.
         - Consolidation bias: require higher confidence to issue buy/sell;
           default to HOLD when uncertain.
         - Signal instability: if signals are changing rapidly, bias toward HOLD.
+        - Sentiment integration: optional third signal that provides news-driven
+          context. When provided, weights are redistributed across all three.
+
+    Weight defaults (with sentiment):
+        RL: 0.50, Specialist: 0.35, Sentiment: 0.15
+    Weight defaults (without sentiment — backward compatible):
+        RL: 0.60, Specialist: 0.40
 
     Args:
-        rl_weight: base weight for RL signal (default 0.60)
-        specialist_weight: base weight for specialist signal (default 0.40)
+        rl_weight: base weight for RL signal (default 0.50)
+        specialist_weight: base weight for specialist signal (default 0.35)
+        sentiment_weight: base weight for sentiment signal (default 0.15)
         consolidation_confidence_threshold: min confidence to override HOLD
             during consolidation (default 0.75)
         instability_hold_threshold: if signal stability < this, force HOLD
@@ -411,13 +421,15 @@ class UnifiedSignalArbiter:
 
     def __init__(
         self,
-        rl_weight: float = 0.60,
-        specialist_weight: float = 0.40,
+        rl_weight: float = 0.50,
+        specialist_weight: float = 0.35,
+        sentiment_weight: float = 0.15,
         consolidation_confidence_threshold: float = 0.75,
         instability_hold_threshold: float = 0.40,
     ):
         self.rl_weight = rl_weight
         self.specialist_weight = specialist_weight
+        self.sentiment_weight = sentiment_weight
         self.consolidation_confidence_threshold = consolidation_confidence_threshold
         self.instability_hold_threshold = instability_hold_threshold
 
@@ -429,9 +441,12 @@ class UnifiedSignalArbiter:
         specialist_confidence: float,
         regime: MarketRegime,
         signal_momentum: Optional[Dict[str, Any]] = None,
+        sentiment_signal: Optional[str] = None,
+        sentiment_confidence: float = 0.0,
     ) -> ArbitrationResult:
         """
-        Produce a final trading signal by merging RL and specialist outputs.
+        Produce a final trading signal by merging RL, specialist, and
+        optionally sentiment outputs.
 
         Args:
             rl_signal: Signal from RL ensemble ("buy", "sell", "hold").
@@ -440,16 +455,33 @@ class UnifiedSignalArbiter:
             specialist_confidence: Specialist signal confidence.
             regime: Market regime from MarketRegimeDetector.
             signal_momentum: Output of SignalTransitionDetector.get_momentum()
+            sentiment_signal: Optional signal from SentimentAnalysisAgent.
+            sentiment_confidence: Optional sentiment signal confidence.
 
         Returns:
             ArbitrationResult with final signal and breakdown.
         """
         rl_signal = rl_signal.lower()
         specialist_signal = specialist_signal.lower()
+        has_sentiment = sentiment_signal is not None
+        if has_sentiment:
+            sentiment_signal = sentiment_signal.lower()
+        else:
+            sentiment_signal = "hold"
+            sentiment_confidence = 0.0
+
+        # Helper: build result with sentiment fields included
+        def _result(**kwargs) -> ArbitrationResult:
+            kwargs.setdefault("sentiment_signal", sentiment_signal)
+            kwargs.setdefault("sentiment_confidence", sentiment_confidence)
+            return ArbitrationResult(**kwargs)
+
+        # Compute effective weights (redistribute if no sentiment)
+        rl_w, spec_w, sent_w = self._effective_weights(has_sentiment, regime)
 
         # 1. Check signal instability — too many rapid changes ⇒ HOLD
         if signal_momentum and signal_momentum.get("stability", 1.0) < self.instability_hold_threshold:
-            return ArbitrationResult(
+            return _result(
                 final_signal="hold",
                 final_confidence=0.5,
                 rl_signal=rl_signal,
@@ -466,9 +498,12 @@ class UnifiedSignalArbiter:
 
         # 2. Consolidation bias — if market is consolidating, require higher confidence
         if regime.regime == "consolidating":
-            max_conf = max(rl_confidence, specialist_confidence)
+            all_confs = [rl_confidence, specialist_confidence]
+            if has_sentiment:
+                all_confs.append(sentiment_confidence)
+            max_conf = max(all_confs)
             if max_conf < self.consolidation_confidence_threshold:
-                return ArbitrationResult(
+                return _result(
                     final_signal="hold",
                     final_confidence=regime.consolidation_score,
                     rl_signal=rl_signal,
@@ -484,13 +519,67 @@ class UnifiedSignalArbiter:
                     ),
                 )
 
-        # 3. Agreement — both agree
-        if rl_signal == specialist_signal:
+        # 3. Agreement — check for 2-way or 3-way agreement
+        core_signals = [rl_signal, specialist_signal]
+        if has_sentiment:
+            core_signals.append(sentiment_signal)
+
+        all_agree = len(set(core_signals)) == 1
+        rl_spec_agree = rl_signal == specialist_signal
+
+        if all_agree:
+            # Unanimous: all sources agree → strongest confidence boost
+            weighted_conf = (
+                rl_confidence * rl_w
+                + specialist_confidence * spec_w
+                + sentiment_confidence * sent_w
+            )
+            boosted_confidence = min(1.0, weighted_conf * 1.20)
+            source_label = "unanimous_agreement" if has_sentiment else "agreement"
+            return _result(
+                final_signal=rl_signal,
+                final_confidence=round(boosted_confidence, 4),
+                rl_signal=rl_signal,
+                rl_confidence=rl_confidence,
+                specialist_signal=specialist_signal,
+                specialist_confidence=specialist_confidence,
+                regime=regime,
+                source=source_label,
+                reason=(
+                    f"All {'3' if has_sentiment else '2'} sources agree on "
+                    f"{rl_signal.upper()} — boosted confidence."
+                ),
+            )
+
+        if rl_spec_agree and has_sentiment and sentiment_signal != rl_signal:
+            # RL + specialist agree, but sentiment disagrees → slight discount
+            weighted_conf = (
+                rl_confidence * rl_w + specialist_confidence * spec_w
+            )
+            discounted = min(1.0, weighted_conf * 1.10)  # smaller boost
+            return _result(
+                final_signal=rl_signal,
+                final_confidence=round(discounted, 4),
+                rl_signal=rl_signal,
+                rl_confidence=rl_confidence,
+                specialist_signal=specialist_signal,
+                specialist_confidence=specialist_confidence,
+                regime=regime,
+                source="agreement_sentiment_dissent",
+                reason=(
+                    f"RL + specialist agree on {rl_signal.upper()}, "
+                    f"but sentiment says {sentiment_signal.upper()}. "
+                    f"Proceeding with mild discount."
+                ),
+            )
+
+        if rl_spec_agree:
+            # No sentiment provided, basic 2-way agreement
             boosted_confidence = min(
                 1.0,
-                (rl_confidence * self.rl_weight + specialist_confidence * self.specialist_weight) * 1.15,
+                (rl_confidence * rl_w + specialist_confidence * spec_w) * 1.15,
             )
-            return ArbitrationResult(
+            return _result(
                 final_signal=rl_signal,
                 final_confidence=round(boosted_confidence, 4),
                 rl_signal=rl_signal,
@@ -514,6 +603,11 @@ class UnifiedSignalArbiter:
                 active_conf = rl_confidence
                 source = "rl_dominant"
 
+            # If sentiment agrees with the active signal, boost confidence
+            if has_sentiment and sentiment_signal == active_signal:
+                active_conf = min(1.0, active_conf + sentiment_confidence * sent_w)
+                source += "_sentiment_confirmed"
+
             # In consolidation, require higher bar
             threshold = (
                 self.consolidation_confidence_threshold
@@ -521,7 +615,7 @@ class UnifiedSignalArbiter:
                 else 0.60
             )
             if active_conf >= threshold:
-                return ArbitrationResult(
+                return _result(
                     final_signal=active_signal,
                     final_confidence=round(active_conf * 0.9, 4),  # slight discount
                     rl_signal=rl_signal,
@@ -536,7 +630,7 @@ class UnifiedSignalArbiter:
                     ),
                 )
             else:
-                return ArbitrationResult(
+                return _result(
                     final_signal="hold",
                     final_confidence=0.5,
                     rl_signal=rl_signal,
@@ -552,24 +646,33 @@ class UnifiedSignalArbiter:
                 )
 
         # 5. Full disagreement (buy vs sell) — pick higher weighted confidence
-        rl_weighted = rl_confidence * self._regime_adjusted_weight(regime, "rl")
-        spec_weighted = specialist_confidence * self._regime_adjusted_weight(regime, "specialist")
+        rl_weighted = rl_confidence * rl_w
+        spec_weighted = specialist_confidence * spec_w
 
-        if rl_weighted >= spec_weighted:
-            winner_signal = rl_signal
-            winner_confidence = rl_confidence
-            source = "rl_dominant"
-        else:
-            winner_signal = specialist_signal
-            winner_confidence = specialist_confidence
-            source = "specialist_dominant"
+        candidates = [
+            (rl_signal, rl_weighted, rl_confidence, "rl_dominant"),
+            (specialist_signal, spec_weighted, specialist_confidence, "specialist_dominant"),
+        ]
+        if has_sentiment and sentiment_signal != "hold":
+            sent_weighted = sentiment_confidence * sent_w
+            candidates.append(
+                (sentiment_signal, sent_weighted, sentiment_confidence, "sentiment_dominant")
+            )
+
+        # Pick the candidate with the highest weighted score
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        winner_signal, _, winner_confidence, source = candidates[0]
 
         # Disagreement penalty — reduce confidence
         final_confidence = round(winner_confidence * 0.75, 4)
 
+        # If sentiment agrees with winner, reduce penalty
+        if has_sentiment and sentiment_signal == winner_signal:
+            final_confidence = round(winner_confidence * 0.85, 4)
+
         # In consolidation or high disagreement, default to hold
         if final_confidence < 0.55:
-            return ArbitrationResult(
+            return _result(
                 final_signal="hold",
                 final_confidence=final_confidence,
                 rl_signal=rl_signal,
@@ -579,12 +682,13 @@ class UnifiedSignalArbiter:
                 regime=regime,
                 source="disagree_hold",
                 reason=(
-                    f"RL says {rl_signal.upper()}, Specialist says {specialist_signal.upper()}. "
+                    f"RL says {rl_signal.upper()}, Specialist says {specialist_signal.upper()}"
+                    f"{', Sentiment says ' + sentiment_signal.upper() if has_sentiment else ''}. "
                     f"Weighted confidence {final_confidence:.2%} too low after disagreement penalty. Holding."
                 ),
             )
 
-        return ArbitrationResult(
+        return _result(
             final_signal=winner_signal,
             final_confidence=final_confidence,
             rl_signal=rl_signal,
@@ -599,16 +703,51 @@ class UnifiedSignalArbiter:
             ),
         )
 
-    def _regime_adjusted_weight(self, regime: MarketRegime, agent_type: str) -> float:
-        """Adjust weight based on market regime."""
-        base_weight = self.rl_weight if agent_type == "rl" else self.specialist_weight
+    def _effective_weights(
+        self,
+        has_sentiment: bool,
+        regime: MarketRegime,
+    ) -> Tuple[float, float, float]:
+        """
+        Compute effective weights for RL, specialist, and sentiment.
 
-        if regime.regime == "trending":
-            # RL tends to learn trend-following; boost it
-            return base_weight * (1.1 if agent_type == "rl" else 0.9)
-        elif regime.regime == "volatile":
-            # Specialist rules are more interpretable in volatile conditions
-            return base_weight * (0.9 if agent_type == "rl" else 1.1)
+        If no sentiment is provided, redistributes sentiment weight
+        proportionally to maintain backward compatibility.
+
+        Returns:
+            (rl_weight, specialist_weight, sentiment_weight)
+        """
+        if has_sentiment:
+            rl_w = self.rl_weight
+            spec_w = self.specialist_weight
+            sent_w = self.sentiment_weight
         else:
-            return base_weight
+            # No sentiment — redistribute its weight proportionally
+            total = self.rl_weight + self.specialist_weight
+            if total > 0:
+                rl_w = (self.rl_weight / total)
+                spec_w = (self.specialist_weight / total)
+            else:
+                rl_w, spec_w = 0.5, 0.5
+            sent_w = 0.0
 
+        # Regime adjustments
+        if regime.regime == "trending":
+            # RL learns trend-following; boost RL, lower sentiment
+            rl_w *= 1.1
+            spec_w *= 0.9
+            sent_w *= 0.8
+        elif regime.regime == "volatile":
+            # News drives volatile markets; boost sentiment + specialist
+            rl_w *= 0.9
+            spec_w *= 1.05
+            sent_w *= 1.3
+
+        # Normalise so weights sum to 1.0
+        total = rl_w + spec_w + sent_w
+        if total > 0:
+            rl_w /= total
+            spec_w /= total
+            sent_w /= total
+
+        return rl_w, spec_w, sent_w

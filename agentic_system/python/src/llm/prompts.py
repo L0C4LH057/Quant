@@ -1,12 +1,16 @@
 """
 Token-optimized prompt templates for trading agents.
 
+SEC-02 fix: Symbols are sanitised via validate_symbol before interpolation.
+
 Token Optimization:
     - Concise system prompts (< 200 tokens each)
     - Structured output formats
     - Reusable templates
 """
 from typing import Dict, Any
+
+from ..utils.validators import validate_symbol
 
 
 class TradingPrompts:
@@ -68,6 +72,7 @@ def format_market_analysis_prompt(
 
     Token Optimization: Minimal data, structured format.
     """
+    symbol = validate_symbol(symbol)
     # Only include key indicators
     ind_str = ", ".join(f"{k}={v:.2f}" for k, v in list(indicators.items())[:6])
 

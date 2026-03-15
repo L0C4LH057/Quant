@@ -273,11 +273,14 @@ class RLSignalGenerator:
 
     def _get_indicator_snapshot(self, df: pd.DataFrame) -> Dict[str, float]:
         """Get the latest indicator values."""
-        exclude = {"date", "open", "high", "low", "close", "volume"}
+        exclude = {
+            "date", "time", "timestamp", "datetime",
+            "open", "high", "low", "close", "volume",
+        }
         last_row = df.iloc[-1]
         indicators = {}
         for col in df.columns:
-            if col not in exclude:
+            if col not in exclude and pd.api.types.is_numeric_dtype(df[col]):
                 val = float(last_row[col]) if not pd.isna(last_row[col]) else 0.0
                 indicators[col] = round(val, 6)
         return indicators

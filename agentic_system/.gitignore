@@ -39,12 +39,20 @@ storage/rl_models/
 storage/training_logs/
 storage/backtest_results/
 storage/market_data/
+storage/news_sentiment/
+storage/orders/
 *.zip
 *.tar.gz
+
+# Trace files
+trace_out.*
 
 # Logs
 *.log
 logs/
+
+# Jupyter
+.ipynb_checkpoints/
 
 # OS
 .DS_Store

@@ -102,7 +102,12 @@ class DataPreprocessor:
         df: pd.DataFrame,
         fit: bool = True,
     ) -> pd.DataFrame:
-        """Normalize numeric columns."""
+        """Normalize numeric columns.
+
+        Raises:
+            RuntimeError: If ``fit=False`` is used before the preprocessor
+                has been fitted (BUG-09 fix).
+        """
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         numeric_cols = [c for c in numeric_cols if c != "date"]
 
@@ -114,6 +119,12 @@ class DataPreprocessor:
                     "mean": df[col].mean(),
                     "std": df[col].std(),
                 }
+        else:
+            if not self._normalization_params:
+                raise RuntimeError(
+                    "DataPreprocessor has not been fitted yet. "
+                    "Call process(df, fit=True) on training data first."
+                )
 
         # Apply normalization
         for col in numeric_cols:

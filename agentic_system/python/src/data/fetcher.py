@@ -5,15 +5,23 @@ Supports:
     - Yahoo Finance (free, no API key)
     - Alpha Vantage (requires API key)
 
+Improvements:
+    - GAP-06: Data quality checks (gap/spike detection)
+    - UPGRADE-07: Async wrapper via asyncio.to_thread
+    - UPGRADE-08: Cache TTL (default 24 h for daily, 1 h for intraday)
+
 Token Optimization:
     - Caching avoids repeated API calls
     - Simple interface reduces prompt complexity
 """
+import asyncio
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -21,6 +29,10 @@ from ..config.base import get_config
 from ..utils.validators import validate_symbol
 
 logger = logging.getLogger(__name__)
+
+# Default cache TTLs in seconds
+_CACHE_TTL_DAILY = 24 * 3600      # 24 hours for daily data
+_CACHE_TTL_INTRADAY = 3600         # 1 hour for intraday data
 
 
 class MarketDataFetcher:
@@ -41,6 +53,7 @@ class MarketDataFetcher:
         self,
         cache_dir: Optional[Path] = None,
         use_cache: bool = True,
+        cache_ttl: Optional[int] = None,
     ):
         """
         Initialize fetcher.
@@ -48,11 +61,13 @@ class MarketDataFetcher:
         Args:
             cache_dir: Directory for cached data
             use_cache: Whether to use caching
+            cache_ttl: Cache time-to-live in seconds (None = use default)
         """
         config = get_config()
         self.cache_dir = cache_dir or Path(config.backtest_results_path).parent / "market_data"
         self.use_cache = use_cache
         self.alpha_vantage_key = config.alpha_vantage_key
+        self._cache_ttl = cache_ttl  # None means auto-detect from interval
 
         if self.use_cache:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -185,14 +200,25 @@ class MarketDataFetcher:
         end_date: str,
         interval: str,
     ) -> Optional[pd.DataFrame]:
-        """Load data from cache if exists."""
+        """Load data from cache if exists and not expired (UPGRADE-08)."""
         path = self._get_cache_path(symbol, start_date, end_date, interval)
-        if path.exists():
-            try:
-                return pd.read_parquet(path)
-            except Exception:
-                return None
-        return None
+        if not path.exists():
+            return None
+
+        # Determine TTL
+        ttl = self._cache_ttl
+        if ttl is None:
+            ttl = _CACHE_TTL_DAILY if interval.endswith("d") else _CACHE_TTL_INTRADAY
+
+        age = time.time() - path.stat().st_mtime
+        if age > ttl:
+            logger.debug(f"Cache expired for {symbol} (age={age:.0f}s, ttl={ttl}s)")
+            return None
+
+        try:
+            return pd.read_parquet(path)
+        except Exception:
+            return None
 
     def _save_to_cache(
         self,
@@ -209,6 +235,77 @@ class MarketDataFetcher:
             logger.debug(f"Cached {symbol} to {path}")
         except Exception as e:
             logger.warning(f"Failed to cache {symbol}: {e}")
+
+    # ── Data quality checks (GAP-06) ────────────────────────────────────
+
+    @staticmethod
+    def check_quality(df: pd.DataFrame, symbol: str = "") -> Dict[str, any]:
+        """
+        Run basic data quality checks on OHLCV data.
+
+        Returns a dict with ``passed: bool`` and a list of ``warnings``.
+        """
+        warnings: List[str] = []
+
+        if df.empty:
+            return {"passed": False, "warnings": ["DataFrame is empty"]}
+
+        # 1. Missing values
+        missing = df[["open", "high", "low", "close"]].isnull().sum().sum()
+        if missing > 0:
+            warnings.append(f"{missing} missing OHLCV values")
+
+        # 2. Zero prices
+        zeros = (df["close"] == 0).sum()
+        if zeros > 0:
+            warnings.append(f"{zeros} zero close prices")
+
+        # 3. Price spikes (>20 % single-bar move)
+        if "close" in df.columns and len(df) > 1:
+            pct_change = df["close"].pct_change().dropna().abs()
+            spikes = (pct_change > 0.20).sum()
+            if spikes > 0:
+                warnings.append(f"{spikes} bars with >20 % price spike")
+
+        # 4. Negative volume
+        if "volume" in df.columns:
+            neg_vol = (df["volume"] < 0).sum()
+            if neg_vol > 0:
+                warnings.append(f"{neg_vol} bars with negative volume")
+
+        # 5. high < low sanity
+        if "high" in df.columns and "low" in df.columns:
+            inverted = (df["high"] < df["low"]).sum()
+            if inverted > 0:
+                warnings.append(f"{inverted} bars where high < low")
+
+        passed = len(warnings) == 0
+        if not passed:
+            logger.warning(f"Data quality issues for {symbol}: {warnings}")
+
+        return {"passed": passed, "warnings": warnings}
+
+    # ── Async wrapper (UPGRADE-07) ──────────────────────────────────────
+
+    async def afetch(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        interval: str = "1d",
+    ) -> pd.DataFrame:
+        """Async wrapper around ``fetch()`` using ``asyncio.to_thread``."""
+        return await asyncio.to_thread(self.fetch, symbol, start_date, end_date, interval)
+
+    async def afetch_multiple(
+        self,
+        symbols: List[str],
+        start_date: str,
+        end_date: str,
+        interval: str = "1d",
+    ) -> Dict[str, pd.DataFrame]:
+        """Async wrapper around ``fetch_multiple()``."""
+        return await asyncio.to_thread(self.fetch_multiple, symbols, start_date, end_date, interval)
 
 
 def fetch_market_data(

@@ -6,8 +6,11 @@ Streamlit dashboard for MT5 trading with real-time charts and agent control.
 Run with: streamlit run scripts/trading_dashboard.py
 """
 
+import logging
 import os
 import sys
+
+logger = logging.getLogger(__name__)
 
 # Fix PyTorch/Streamlit file watcher conflict
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -38,15 +41,19 @@ import json
 from src.agents.specialized.market_analysis_agent import MarketAnalysisAgent
 from src.agents.specialized.risk_management_agent import RiskManagementAgent
 from src.agents.specialized.execution_agent import ExecutionAgent
+from src.agents.specialized.sentiment_analysis_agent import SentimentAnalysisAgent
+
+from src.data.sentiment_fetcher import fetch_news_sentiment, NewsSentimentFetcher
+from src.features.sentiment_analyzer import (
+    add_sentiment_features,
+    compute_sentiment_features,
+    get_sentiment_summary,
+)
 
 # Import RL agents and components
 from src.agents.rl_agents.ensemble_agent import EnsembleAgent
 
-# Force reload of signal generator to pick up changes
-import importlib
-import src.agents.rl_agents.signal_generator
-importlib.reload(src.agents.rl_agents.signal_generator)
-
+# Removed importlib.reload due to circular import issues with Streamlit watcher
 from src.agents.rl_agents.signal_generator import RLSignalGenerator
 from src.agents.rl_agents.rl_trace_wrapper import RLTraceWrapper
 from src.environments.trading_env import TradingEnv
@@ -223,7 +230,10 @@ class MT5DashboardClient:
                 json=payload,
                 timeout=self.timeout
             )
-            return resp.json()
+            data = resp.json()
+            if resp.status_code != 200:
+                return {"error": data.get("detail", data.get("error", resp.text))}
+            return data
         except Exception as e:
             return {"error": str(e)}
     
@@ -239,7 +249,10 @@ class MT5DashboardClient:
                 json=payload,
                 timeout=self.timeout
             )
-            return resp.json()
+            data = resp.json()
+            if resp.status_code != 200:
+                return {"error": data.get("detail", data.get("error", resp.text))}
+            return data
         except Exception as e:
             return {"error": str(e)}
 
@@ -516,6 +529,8 @@ if "agent_analysis_interval" not in st.session_state:
     st.session_state.agent_analysis_interval = 10  # seconds
 if "auto_execute_trades" not in st.session_state:
     st.session_state.auto_execute_trades = False
+if "enable_news_sentiment" not in st.session_state:
+    st.session_state.enable_news_sentiment = False
 if "max_trades_session" not in st.session_state:
     st.session_state.max_trades_session = 10
 if "trade_cooldown" not in st.session_state:
@@ -541,6 +556,7 @@ def get_agents():
         "market_analyst": MarketAnalysisAgent(),
         "risk_manager": RiskManagementAgent(max_risk_per_trade=0.02),
         "executor": ExecutionAgent(),
+        "sentiment_analyst": SentimentAnalysisAgent(),
     }
 
 
@@ -601,15 +617,38 @@ def _run_async(coro):
     """Run async code safely with Streamlit."""
     try:
         loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, coro)
-                return future.result(timeout=30)
-        else:
-            return loop.run_until_complete(coro)
     except RuntimeError:
-        return asyncio.run(coro)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    if loop.is_running():
+        # Streamlit >= 1.30 runs in an async context, but blockingly inside ScriptRunner
+        import threading
+        result = None
+        err = None
+        
+        def _run_in_thread():
+            nonlocal result, err
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                result = new_loop.run_until_complete(coro)
+            except Exception as e:
+                err = e
+            finally:
+                new_loop.close()
+                
+        t = threading.Thread(target=_run_in_thread)
+        t.start()
+        t.join(timeout=30.0)
+        
+        if t.is_alive():
+            raise TimeoutError("Async execution timed out")
+        if err:
+            raise err
+        return result
+    else:
+        return loop.run_until_complete(coro)
 
 
 def _auto_train_rl_agents(df: pd.DataFrame, symbol: str):
@@ -629,7 +668,11 @@ def _auto_train_rl_agents(df: pd.DataFrame, symbol: str):
                 model, env, metrics = run_rl_training(
                     df, algo_name, "sharpe", quick_timesteps, symbol=symbol,
                 )
-                st.session_state.rl_trained_agents[agent_key] = model
+                st.session_state.rl_trained_agents[agent_key] = {
+                    "model": model,
+                    "env": env,
+                    "metrics": metrics,
+                }
                 st.session_state.rl_training_log.insert(0, {
                     "time": datetime.now().strftime("%H:%M:%S"),
                     "agent": agent_key,
@@ -648,19 +691,53 @@ def _build_rl_signal(df: pd.DataFrame, symbol: str) -> dict:
     Returns the RLSignalGenerator output dict, or a hold-fallback on error.
     """
     try:
-        ensemble = EnsembleAgent()
-        for name, model in st.session_state.rl_trained_agents.items():
-            ensemble.add_agent(name, model)
+        ensemble = EnsembleAgent(
+            buy_threshold=0.05,   # Lower thresholds for lightly-trained auto models
+            sell_threshold=-0.05,
+            min_confidence=0.4,
+        )
+        for name, agent_data in st.session_state.rl_trained_agents.items():
+            # Handle both formats: dict {"model": ..., "env": ...} or raw SB3 model
+            if isinstance(agent_data, dict):
+                raw_model = agent_data["model"]
+            else:
+                raw_model = agent_data
+
+            # Wrap SB3 model so predict() returns a single action array
+            # (raw SB3 predict returns (action, states) tuple)
+            class _ModelWrapper:
+                def __init__(self, m):
+                    self._m = m
+                def predict(self, obs, deterministic=True):
+                    action, _ = self._m.predict(obs, deterministic=deterministic)
+                    return action
+
+            ensemble.add_agent(name, _ModelWrapper(raw_model))
 
         if ensemble.agent_count == 0:
             return {"signal": "hold", "confidence": 0, "reason": "No RL agents available"}
 
         st.session_state.rl_ensemble = ensemble
-        gen = RLSignalGenerator(ensemble, min_confidence=0.55)
-        result = gen.generate(df, symbol=symbol)
+
+        # Clean df: keep only date + numeric columns (same as run_rl_training)
+        # This avoids crashes from non-numeric columns like MT5's string 'time'
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        keep_cols = [c for c in ["date", "open", "high", "low", "close", "volume"] if c in df.columns]
+        for c in numeric_cols:
+            if c not in keep_cols:
+                keep_cols.append(c)
+        df_clean = df[keep_cols].copy()
+
+        gen = RLSignalGenerator(
+            ensemble,
+            min_confidence=0.4,  # Lower threshold for auto-trained models
+            use_technical_indicators=False,  # Auto-trained models use raw OHLCV
+        )
+        result = gen.generate(df_clean, symbol=symbol)
         st.session_state.rl_signal_result = result
         return result
     except Exception as e:
+        logger.error(f"RL signal generation failed: {e}", exc_info=True)
         return {"signal": "hold", "confidence": 0, "reason": f"RL signal error: {e}"}
 
 
@@ -745,6 +822,59 @@ def run_agent_pipeline(client, symbol: str, timeframe: str, account_balance: flo
         regime = regime_detector.detect(df_copy if 'df_copy' in dir() else df)
     st.session_state.market_regime = regime
 
+    # ── Step 5.5: Sentiment Analysis (Optional) ──
+    sentiment_signal = "hold"
+    sentiment_confidence = 0.0
+    sentiment_summary = None
+    
+    if getattr(st.session_state, "enable_news_sentiment", False):
+        try:
+            # Fetch lookback period for sentiment matching
+            end_date_str = datetime.now().strftime("%Y-%m-%d")
+            start_date_str = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+
+            news_dict = fetch_news_sentiment([symbol], start_date_str, end_date_str)
+            # Look up by original symbol or normalized name
+            news_df = news_dict.get(symbol, pd.DataFrame())
+            if news_df.empty:
+                normalized = NewsSentimentFetcher._normalize_mt5_symbol(symbol)
+                news_df = news_dict.get(normalized, pd.DataFrame())
+
+            if not news_df.empty:
+                # Score headlines with VADER and compute summary
+                scored_news = compute_sentiment_features(news_df, model="vader")
+                news_summary = get_sentiment_summary(scored_news)
+                top_headlines = scored_news["headline"].head(10).tolist()
+
+                # Add sentiment features to market df
+                enriched_df = add_sentiment_features(df_copy, news_df)
+                latest = enriched_df.iloc[-1]
+
+                # Extract ONLY the 5 sentiment feature keys the agent expects
+                sentiment_feature_keys = [
+                    "sentiment_score", "sentiment_magnitude",
+                    "sentiment_volume", "sentiment_momentum",
+                    "sentiment_divergence",
+                ]
+                latest_features = {
+                    k: float(latest.get(k, 0.0)) for k in sentiment_feature_keys
+                }
+
+                # Build agent input with headlines + summary for richer analysis
+                sentiment_input = {
+                    "symbol": symbol,
+                    "sentiment_features": latest_features,
+                    "headlines": top_headlines,
+                    "sentiment_summary": news_summary,
+                }
+                sentiment_result = _run_async(agents["sentiment_analyst"].process(sentiment_input))
+
+                sentiment_signal = sentiment_result.get("signal", "hold")
+                sentiment_confidence = sentiment_result.get("confidence", 0.0)
+                sentiment_summary = sentiment_result.get("sentiment_summary", news_summary)
+        except Exception as e:
+            logger.error(f"Sentiment analysis failed: {e}", exc_info=True)
+
     # ── Step 6: Signal arbitration ──
     arbiter = UnifiedSignalArbiter()
     transition_detector = st.session_state.signal_transition_detector
@@ -755,6 +885,8 @@ def run_agent_pipeline(client, symbol: str, timeframe: str, account_balance: flo
         rl_confidence=rl_confidence,
         specialist_signal=specialist_signal,
         specialist_confidence=specialist_confidence,
+        sentiment_signal=sentiment_signal,
+        sentiment_confidence=sentiment_confidence,
         regime=regime,
         signal_momentum=momentum,
     )
@@ -784,6 +916,9 @@ def run_agent_pipeline(client, symbol: str, timeframe: str, account_balance: flo
         "rl_confidence": rl_confidence,
         "specialist_signal": specialist_signal,
         "specialist_confidence": specialist_confidence,
+        "sentiment_signal": sentiment_signal,
+        "sentiment_confidence": sentiment_confidence,
+        "sentiment_summary": sentiment_summary,
         "regime": regime.regime,
         "consolidation_score": regime.consolidation_score,
     }
@@ -844,6 +979,17 @@ def run_agent_pipeline(client, symbol: str, timeframe: str, account_balance: flo
                         "SL": risk_result["stop_loss"],
                         "TP": risk_result["take_profit"],
                         "Status": trade_result.get("status", "executed"),
+                    })
+                else:
+                    st.session_state.agent_trades.insert(0, {
+                        "Time": datetime.now().strftime("%H:%M:%S"),
+                        "Symbol": symbol,
+                        "Action": arbitration.final_signal.upper(),
+                        "Size": risk_result["position_size"],
+                        "Price": current_price,
+                        "SL": risk_result["stop_loss"],
+                        "TP": risk_result["take_profit"],
+                        "Status": f"Failed: {trade_result['error']}",
                     })
 
     return analysis_result, risk_result, trade_result, arbitration
@@ -1235,6 +1381,13 @@ def main():
             )
             st.session_state.auto_execute_trades = auto_execute
             
+            enable_news = st.toggle(
+                "📰 Enable News Sentiment",
+                value=st.session_state.enable_news_sentiment,
+                help="Fetch real-time news and use SentimentAnalysisAgent"
+            )
+            st.session_state.enable_news_sentiment = enable_news
+            
             if auto_execute:
                 st.warning("⚠️ **LIVE TRADING ENABLED** - Trades will be executed automatically!")
                 
@@ -1370,7 +1523,11 @@ def main():
             # ── Signal Comparison ──
             if "error" not in analysis_result:
                 st.markdown("#### 📊 Signal Comparison: RL vs Specialist vs Final")
-                col_rl, col_spec, col_final = st.columns(3)
+                # Support for 2-way vs 3-way arbitration display
+                if getattr(st.session_state, "enable_news_sentiment", False):
+                    col_rl, col_spec, col_sent, col_final = st.columns(4)
+                else:
+                    col_rl, col_spec, col_final = st.columns(3)
 
                 def _signal_color(sig):
                     sig = sig.upper()
@@ -1389,6 +1546,14 @@ def main():
                     color = _signal_color(spec_sig)
                     st.markdown(f"**📊 Specialist:** :{color}[{spec_sig}]")
                     st.metric("Specialist Confidence", f"{spec_conf:.2%}")
+                
+                if getattr(st.session_state, "enable_news_sentiment", False):
+                    with col_sent:
+                        sent_sig = analysis_result.get("sentiment_signal", "hold").upper()
+                        sent_conf = analysis_result.get("sentiment_confidence", 0)
+                        color = _signal_color(sent_sig)
+                        st.markdown(f"**📰 Sentiment:** :{color}[{sent_sig}]")
+                        st.metric("Sentiment Confidence", f"{sent_conf:.2%}")
 
                 with col_final:
                     final_sig = analysis_result.get("signal", "hold").upper()
@@ -1424,6 +1589,30 @@ def main():
                 st.error(analysis_result["error"])
 
             st.markdown("---")
+            
+            # ── News Sentiment Analysis Card ──
+            if getattr(st.session_state, "enable_news_sentiment", False) and "sentiment_summary" in analysis_result:
+                summary = analysis_result["sentiment_summary"]
+                if summary:
+                    st.markdown("#### 📰 News Sentiment Analysis")
+                    
+                    s_score = summary.get('mean_sentiment', 0)
+                    s_color = "green" if s_score > 0 else "red" if s_score < 0 else "gray"
+                    sentiment_label = "Bullish" if s_score > 0.05 else "Bearish" if s_score < -0.05 else "Neutral"
+                    
+                    st.markdown(f"**Overall Sentiment:** :{s_color}[{sentiment_label} ({s_score:.2f})]")
+                    
+                    n1, n2, n3, n4 = st.columns(4)
+                    with n1:
+                        st.metric("Articles Analyzed", summary.get('article_count', 0))
+                    with n2:
+                        st.metric("Bullish News", f"{summary.get('bullish_pct', 0):.0%}")
+                    with n3:
+                        st.metric("Bearish News", f"{summary.get('bearish_pct', 0):.0%}")
+                    with n4:
+                        st.metric("Intensity (Magnitude)", f"{summary.get('magnitude', 0):.2f}")
+                        
+                    st.markdown("---")
 
             # ── Risk Management ──
             col_risk_display, col_trade_display = st.columns(2)

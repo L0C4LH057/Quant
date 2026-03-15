@@ -83,9 +83,9 @@ class DeepSeekProvider(BaseLLMProvider):
         ... )
     """
 
-    # Latest model (Dec 2025)
-    DEFAULT_MODEL = "deepseek-chat"  # Maps to V3.2
-    REASONER_MODEL = "deepseek-reasoner"  # For complex reasoning
+    # UPGRADE-12: Model names pinned to specific versions for reproducibility
+    DEFAULT_MODEL = "deepseek-chat"       # Maps to V3.2 — override via config
+    REASONER_MODEL = "deepseek-reasoner"  # R1
 
     def __init__(
         self,
@@ -100,14 +100,16 @@ class DeepSeekProvider(BaseLLMProvider):
         Args:
             api_key: DeepSeek API key (from env if not provided)
             base_url: API base URL
-            model: Model to use (default: deepseek-chat/V3.2)
+            model: Model to use.  Set DEEPSEEK_MODEL env var to override.
             timeout: Request timeout in seconds
         """
+        import os
+
         config = get_config()
 
         self.api_key = api_key or config.deepseek_api_key
         self.base_url = base_url or config.deepseek_base_url
-        self.model = model or self.DEFAULT_MODEL
+        self.model = model or os.getenv("DEEPSEEK_MODEL", self.DEFAULT_MODEL)
         self.timeout = timeout
 
         if not self.api_key:
@@ -295,6 +297,133 @@ class DeepSeekProvider(BaseLLMProvider):
         }
 
 
+class AnthropicProvider(BaseLLMProvider):
+    """
+    Anthropic Claude LLM Provider (GAP-02).
+
+    Uses the Anthropic Messages API via httpx.
+
+    Example:
+        >>> provider = AnthropicProvider()
+        >>> response = await provider.generate(
+        ...     system_prompt="You are a trading analyst.",
+        ...     user_prompt="Analyze EURUSD trend."
+        ... )
+    """
+
+    DEFAULT_MODEL = "claude-sonnet-4-20250514"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: float = 60.0,
+    ):
+        config = get_config()
+        self.api_key = api_key or config.anthropic_api_key
+        self.model = model or self.DEFAULT_MODEL
+        self.timeout = timeout
+        self.total_tokens_used = 0
+
+        if not self.api_key:
+            logger.warning("Anthropic API key not configured")
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+    ) -> str:
+        response = await self._call_api(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return response.content
+
+    async def generate_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        response_format: Optional[Dict[str, Any]] = None,
+        max_tokens: int = 500,
+    ) -> Dict[str, Any]:
+        json_prompt = f"{system_prompt}\n\nRespond with valid JSON only. No markdown."
+        response = await self._call_api(
+            system_prompt=json_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+            temperature=0.3,
+        )
+        try:
+            content = response.content.strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            return {"error": "Invalid JSON response", "raw": response.content}
+
+    async def _call_api(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+    ) -> LLMResponse:
+        if not self.api_key:
+            raise ValueError("Anthropic API key not configured")
+
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+
+            content = data["content"][0]["text"]
+            usage = data.get("usage", {})
+            total = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            self.total_tokens_used += total
+
+            return LLMResponse(
+                content=content,
+                model=data.get("model", self.model),
+                usage={
+                    "prompt_tokens": usage.get("input_tokens", 0),
+                    "completion_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": total,
+                },
+                finish_reason=data.get("stop_reason", "end_turn"),
+            )
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Anthropic API error: {e.response.status_code}")
+            raise
+        except Exception as e:
+            logger.error(f"Anthropic API error: {e}")
+            raise
+
+    def get_usage_stats(self) -> Dict[str, int]:
+        return {"total_tokens_used": self.total_tokens_used, "model": self.model}
+
+
 class LLMProviderFactory:
     """Factory for creating LLM providers."""
 
@@ -304,15 +433,17 @@ class LLMProviderFactory:
         Create LLM provider instance.
 
         Args:
-            provider: Provider name (deepseek)
+            provider: Provider name (deepseek, anthropic)
 
         Returns:
             LLM provider instance
         """
         if provider == "deepseek":
             return DeepSeekProvider()
+        elif provider == "anthropic":
+            return AnthropicProvider()
         else:
-            raise ValueError(f"Unknown provider: {provider}")
+            raise ValueError(f"Unknown provider: {provider}. Available: deepseek, anthropic")
 
 
 # Default provider instance

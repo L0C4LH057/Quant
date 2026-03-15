@@ -2,11 +2,13 @@
 FastAPI application for the RL Trading Service.
 
 Security:
-    - API key authentication
+    - API key authentication (timing-safe comparison)
     - Input validation (Pydantic)
     - CORS configured
     - Error handling
+    - Rate limiting
 """
+import hmac
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,6 +39,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
     Security:
         - Raises 403 if key is missing or invalid
         - Key loaded from environment, never hardcoded
+        - Uses hmac.compare_digest to prevent timing attacks (BUG-05 fix)
     """
     config = get_config()
     expected_key = config.api_key
@@ -49,7 +52,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
     if not api_key:
         raise HTTPException(status_code=403, detail="API key required")
 
-    if api_key != expected_key:
+    if not hmac.compare_digest(api_key.encode(), expected_key.encode()):
         raise HTTPException(status_code=403, detail="Invalid API key")
 
     return api_key
@@ -90,10 +93,27 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS middleware
+    # ── Rate limiting (SEC-05) ───────────────────────────────────────────
+    try:
+        from slowapi import Limiter, _rate_limit_exceeded_handler
+        from slowapi.errors import RateLimitExceeded
+        from slowapi.util import get_remote_address
+
+        limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    except ImportError:
+        logger.warning("slowapi not installed — rate limiting disabled")
+
+    # CORS middleware (BUG-04 fix: no wildcard when credentials=True)
+    allowed_origins = (
+        ["http://localhost:3000", "http://localhost:8080"]
+        if config.debug
+        else [os.getenv("CORS_ORIGIN", "http://localhost:8080")]
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if config.debug else ["http://localhost:8080"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

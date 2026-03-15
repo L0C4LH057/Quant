@@ -26,7 +26,7 @@ import gymnasium as gym
 import numpy as np
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import CallbackList
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv, VecNormalize
 
 from .callbacks import (
     CheckpointCallback,
@@ -67,8 +67,8 @@ class TrainingConfig:
         checkpoint_path: Model checkpoint directory
         seed: Random seed for reproducibility
     """
-    total_timesteps: int = 100_000
-    eval_freq: int = 5_000
+    total_timesteps: int = 500_000  # UPGRADE-04: raised from 100K
+    eval_freq: int = 10_000
     eval_episodes: int = 5
     checkpoint_freq: int = 10_000
     early_stopping_patience: int = 10
@@ -78,6 +78,7 @@ class TrainingConfig:
     tensorboard_log: Optional[str] = None
     checkpoint_path: str = "checkpoints"
     seed: Optional[int] = None
+    use_vec_normalize: bool = True  # UPGRADE-03: Wrap envs in VecNormalize
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -198,14 +199,19 @@ class TrainingManager:
         )
     
     def _create_envs(self) -> VecEnv:
-        """Create vectorized environments."""
+        """Create vectorized environments with optional VecNormalize."""
         if self.config.n_envs == 1:
-            return DummyVecEnv([self.env_factory])
-        
-        if self.config.use_multiprocessing:
-            return SubprocVecEnv([self.env_factory] * self.config.n_envs)
+            venv = DummyVecEnv([self.env_factory])
+        elif self.config.use_multiprocessing:
+            venv = SubprocVecEnv([self.env_factory] * self.config.n_envs)
         else:
-            return DummyVecEnv([self.env_factory] * self.config.n_envs)
+            venv = DummyVecEnv([self.env_factory] * self.config.n_envs)
+
+        # UPGRADE-03: normalise observations & rewards
+        if self.config.use_vec_normalize:
+            venv = VecNormalize(venv, norm_obs=True, norm_reward=True, clip_obs=10.0)
+
+        return venv
     
     def _create_model(self) -> BaseAlgorithm:
         """Create the RL model."""

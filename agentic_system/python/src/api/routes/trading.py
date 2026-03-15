@@ -57,18 +57,31 @@ class AgentEvaluateRequest(BaseModel):
 # MT5 Client Dependency
 # ==========================================
 
-def get_mt5() -> MT5Client:
-    """Get MT5 client from config."""
-    config = get_config()
-    
-    # Use environment variables for MT5 bridge
+_mt5_client: Optional["MT5Client"] = None
+
+
+def get_mt5() -> "MT5Client":
+    """
+    Get a singleton MT5 client (BUG-06 fix: reuse connection).
+
+    SEC-01 fix: No hardcoded default API key — requires env var.
+    """
+    global _mt5_client
+    if _mt5_client is not None:
+        return _mt5_client
+
     import os
+    bridge_key = os.getenv("MT5_BRIDGE_API_KEY", "")
+    if not bridge_key:
+        logger.warning("MT5_BRIDGE_API_KEY not set — MT5 calls may fail")
+
     mt5_config = MT5Config(
         bridge_url=os.getenv("MT5_BRIDGE_URL", "http://localhost:8888"),
-        api_key=os.getenv("MT5_BRIDGE_API_KEY", "pipflow-dev-key-change-me"),
+        api_key=bridge_key,
     )
-    
-    return MT5Client(mt5_config)
+
+    _mt5_client = MT5Client(mt5_config)
+    return _mt5_client
 
 
 # ==========================================
